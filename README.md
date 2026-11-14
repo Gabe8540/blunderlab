@@ -1,0 +1,40 @@
+# Blunder Lab
+
+**Current version: 1.3.1**
+
+Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
+
+## Features
+
+**Review**
+- Stockfish rates every move: Brilliant, Great, Best, Excellent, Good, Book, Inaccuracy, Mistake, Miss, Blunder
+- New games are found and reviewed automatically when they finish
+- "Review all" for every game not yet reviewed
+- Game rating for both players (the level each side played at), with calibration against chess.com's numbers
+- Eval graph, clock graph (time spent on each move), best lines you can step through
+- Arrow keys on a computer, swipe on a phone
+
+**Puzzles**
+- Every mistake, miss or blunder you made becomes a puzzle
+- Wrong tries never reveal the answer
+- Tagged by theme: fork, pin, skewer, free piece, checkmate, back-rank mate and more
+- Spaced repetition: solved puzzles come back after 1, 3, 7, 16 and 35 days
+
+**Trainer**
+- My opponents: play your opening against the moves your real opponents played
+- Scout: look up any chess.com player's openings and weak lines, and play against their moves
+- Openings: starter main lines, the openings you play, and about 3,200 named openings to learn and test
+- Repertoire: pick your openings and see where you left them in your games
+- Endgames: play out winning or level endgames from your own games against Stockfish
+
+**Insights**
+- This week against last week
+- Rating over time with a projection
+- Mistakes by type, and whether they come from rushing or time trouble
+- Results by colour and opening, and where the big errors happen
+
+**Devices**
+- Layout adapts to phone, tablet and desktop
+- Reviews, puzzle progress, repertoire and settings sync between devices through a private GitHub gist
+
+Setup for phones and syncing is in `PHONE-AND-SYNC.txt`. Open-source parts and their licences are in `LICENSES.txt`.

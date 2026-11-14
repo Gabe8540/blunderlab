@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Blunder Lab">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111417">
+<link rel="icon" href="icons/icon32.png">
+<link rel="apple-touch-icon" href="icons/icon180.png">
+<link rel="manifest" href="site.webmanifest">
+<title>Blunder Lab</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <section class="left">
+    <div class="who" id="top"></div>
+    <div class="stage">
+      <div class="bar" id="bar" aria-label="Evaluation"><i id="barFill"></i><span id="barText"></span></div>
+      <div id="board"></div>
+    </div>
+    <div class="who" id="bottom"></div>
+    <div class="nav">
+      <button data-nav="start" title="First move (↑)" aria-label="First move">⏮</button>
+      <button data-nav="prev" title="Back (←)" aria-label="Back">◀</button>
+      <button data-nav="next" title="Forward (→)" aria-label="Forward">▶</button>
+      <button data-nav="end" title="Last move (↓)" aria-label="Last move">⏭</button>
+      <button data-nav="flip" title="Flip board (F)" aria-label="Flip board">⇅</button>
+    </div>
+    <div class="lines" id="lines" aria-live="off"></div>
+  </section>
+  <section class="right">
+    <header>
+      <div class="brand"><span class="logo">??</span>Blunder Lab</div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="games">Games</button><button data-tab="review">Review</button><button data-tab="puzzles">Puzzles</button><button data-tab="trainer">Trainer</button><button data-tab="insights">Insights</button>
+      </nav>
+    </header>
+    <div id="status" hidden></div>
+    <main id="panel"></main>
+  </section>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

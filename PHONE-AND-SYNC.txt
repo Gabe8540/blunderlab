@@ -1,0 +1,50 @@
+Blunder Lab on your iPhone and iPad, with everything synced
+
+You do this once. It takes about ten minutes and needs a free GitHub account.
+GitHub does two jobs: it hosts the web app so your phone can open it, and it stores
+your Blunder Lab data in a private "gist" that only your account can read.
+
+A. MAKE THE ACCOUNT AND PUT THE APP ONLINE (on your computer)
+1. Go to github.com and sign up (free).
+2. Top right, press + and "New repository". Name it blunderlab, leave it Public,
+   press "Create repository".
+3. On the next page click "uploading an existing file".
+4. Open the unzipped blunderlab folder, select everything INSIDE it (Ctrl+A) and drag
+   it all onto the page. Wait until every file is listed, then press "Commit changes".
+5. In the repository open Settings, then Pages. Under "Branch" choose main and
+   / (root), press Save.
+6. After a minute or two your app is live at
+       https://YOUR-GITHUB-NAME.github.io/blunderlab/
+   The app's code is public there. Your data is not in it.
+
+B. MAKE THE SYNC TOKEN (on your computer)
+1. On github.com click your picture, then Settings, Developer settings,
+   Personal access tokens, Tokens (classic).
+2. "Generate new token (classic)". Note: Blunder Lab. Expiration: No expiration.
+   Tick ONLY the box called gist. Press Generate.
+3. Copy the token (it starts with ghp_). You only see it once, so keep a copy
+   somewhere safe, such as your password manager.
+   The token can only read and write your gists, nothing else on your account.
+
+C. TURN ON SYNC ON EVERY DEVICE
+- PC and laptop: open Blunder Lab (the extension), Games tab, scroll to
+  "Sync between devices", paste the token, press "Turn on sync".
+- iPhone and iPad: open the address from step A6 in Safari, do the same on the Games
+  tab. Then press Share and "Add to Home Screen" to get an app icon.
+The first device uploads what it has. Every other device downloads it. From then on
+each one syncs by itself a few seconds after anything changes, and every few minutes.
+
+WHAT SYNCS
+Reviews (with the games), puzzle progress, opening and endgame progress, your
+repertoire, game rating calibration, your chess.com username and your game history.
+The review depth setting stays per device: phones start on Quick.
+
+GOOD TO KNOW
+- Let the computer do the reviewing. It is much faster than a phone, it checks for new
+  games every minute, and the finished review then appears on your phone.
+- If your phone's browser is not allowed to read chess.com directly, Blunder Lab says
+  so and carries on with what the computer has synced.
+- To update the web app later, upload the new files to the same repository the same
+  way (step A4). They replace the old ones.
+- Lost the token or want to revoke it? Delete it on GitHub (same page as B1), make a
+  new one, and paste the new one on each device.

@@ -1,0 +1,16 @@
+Blunder Lab bundles these open-source parts:
+
+- Stockfish chess engine, WebAssembly build "stockfish.js" 19 (lite, single-threaded)
+  by Nathan Rugg and the Stockfish developers. GNU General Public License v3.
+  Licence text: engine/COPYING-stockfish.txt
+  Source: https://github.com/nmrugg/stockfish.js and https://github.com/official-stockfish/Stockfish
+- chess.js 1.4.0 by Jeff Hlywa. BSD 2-Clause licence. https://github.com/jhlywa/chess.js
+- Chess pieces by Colin M.L. Burnett ("cburnett"), licensed GPLv2+ (also GFDL and BSD).
+- Opening names from lichess-org/chess-openings. CC0 public-domain dedication.
+
+Blunder Lab's own code (the files in this folder outside engine/, js/chess.js, pieces/ and
+data/) is included here in source form and may be used under the GNU GPL v3 as well.
+
+Blunder Lab is not affiliated with Chess.com. It reads your public games through
+Chess.com's public data API. Move ratings use Chess.com's published expected-points
+bands, but the engine, depth and details differ, so ratings will not always match theirs.
