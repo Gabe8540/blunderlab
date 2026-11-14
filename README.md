@@ -1,4 +1,4 @@
-# Blunder Lab
+# Blunder Lab made by Claude
 
 **Current version: 1.3.1**
 
