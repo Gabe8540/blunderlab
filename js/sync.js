@@ -57,6 +57,19 @@ export class Gist {
 const stable = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x));
 export const same = (a, b) => stable(a) === stable(b);
 const pickMap = (a, b, better) => { const out = Object.assign({}, a || {}); for (const k in b || {}) out[k] = k in out ? (better(b[k], out[k]) ? b[k] : out[k]) : b[k]; return out; };
+// Today's daily puzzles. A newer day replaces an older one. On the same day the set started first is the base, the
+// other fills any gaps (five per type at most), and each puzzle keeps its best result.
+export function mergeDaily(a, b) {
+  const none = { day: '', t: 0, list: [], res: {} };
+  if (!a || !a.day) return b && b.day ? b : none;
+  if (!b || !b.day) return a;
+  if (a.day !== b.day) return a.day > b.day ? a : b;
+  const first = (a.t || 0) <= (b.t || 0), x = first ? a : b, y = first ? b : a, list = x.list.slice(), n = {}, rank = { ok: 3, fixed: 2, miss: 1 }, res = Object.assign({}, x.res);
+  list.forEach(p => { n[p.th] = (n[p.th] || 0) + 1; });
+  for (const p of y.list) if (!list.some(q => q.id === p.id) && (n[p.th] || 0) < 5) { list.push(p); n[p.th] = (n[p.th] || 0) + 1; }
+  for (const k in y.res) if ((rank[y.res[k]] || 0) > (rank[res[k]] || 0)) res[k] = y.res[k];
+  return { day: x.day, t: x.t, list, res };
+}
 /* goals: { t, rating, pz, rv }, act: { 'YYYY-MM-DD': { pz } } (each day keeps its highest count).
    state: { user: { v, t }, puzzles: { id: p }, opProg: { name: { n, clean, last } }, rep: { t, list }, calib: { id: { w, b, t } }, endProg: { id: { n, ok } }, pasted: [meta] }
    Nothing is ever lost by merging: the copy with more practice behind it wins, item by item. */
@@ -73,6 +86,7 @@ export function mergeState(a, b) {
     calib: pickMap(a.calib, b.calib, (x, y) => (x.t || 0) > (y.t || 0)),
     endProg: pickMap(a.endProg, b.endProg, (x, y) => (x.n || 0) > (y.n || 0)),
     goals: newer(a.goals, b.goals) || { t: 0 },
+    daily: mergeDaily(a.daily, b.daily),
     act: (() => { const out = {}; for (const src of [a.act || {}, b.act || {}]) for (const day in src) { const o = out[day] || (out[day] = {}); for (const k in src[day]) o[k] = Math.max(o[k] || 0, src[day][k]); } return out; })(),
     pasted: Object.values(pasted)
   };

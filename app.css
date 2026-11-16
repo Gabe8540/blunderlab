@@ -280,3 +280,7 @@ table.rep td:first-child{white-space:normal}
 .grade.gA{background:var(--best)}.grade.gB{background:var(--good)}.grade.gC{background:var(--inaccuracy)}.grade.gD{background:var(--mistake)}.grade.gF{background:var(--blunder)}
 .chips .tick{margin:0 0 0 2px}
 @media (max-width:860px){.goal{grid-template-columns:118px minmax(0,1fr)}}
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
+.dgrid button{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600;text-align:left}
+.dgrid button:disabled{opacity:.5;cursor:default}
+.dgrid b{font:700 12.5px var(--mono);color:var(--muted)}

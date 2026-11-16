@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.4**
+**Current version: 1.4.1**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -21,6 +21,7 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Wrong tries never reveal the answer
 - Tagged by theme: fork, pin, skewer, free piece, checkmate, back-rank mate and more
 - Solve one on the first attempt and it is finished; missed ones keep coming back
+- Daily puzzles: five new made-up puzzles of every type each day, with a streak for full sets
 - When a type runs out, new puzzles of that type are made up by the engine
 
 **Trainer**

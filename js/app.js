@@ -24,7 +24,7 @@ const S = {
   train: null,                       // a trainer session on the board
   tr: { sub: 'opp', color: 'w', tc: '', q: '', course: null }, opProg: {},
   rep: { t: 0, list: [] }, calib: {}, endProg: {}, scout: null, pzTheme: '', pzMaking: null, pzMsg: '',
-  goals: { t: 0 }, act: {}, explain: '', drillMsg: '',
+  goals: { t: 0 }, act: {}, explain: '', drillMsg: '', daily: { day: '', t: 0, list: [], res: {} },
   sync: { token: '', gist: '', last: 0, error: '', busy: false }
 };
 let bg, live, liveToken = 0, cancelBatch = false;
@@ -38,7 +38,7 @@ async function loadAll() {
   S.puzzles = d.puzzles || {};
   S.hist = d.hist || []; S.histMonths = d.histMonths || []; S.histUser = d.histUser || ''; S.opProg = d.opProg || {};
   S.rep = d.rep || { t: 0, list: [] }; S.calib = d.calib || {}; S.endProg = d.endProg || {};
-  S.goals = d.goals || { t: 0 }; S.act = d.act || {};
+  S.goals = d.goals || { t: 0 }; S.act = d.act || {}; if (d.daily && d.daily.list) S.daily = d.daily;
   if ((d.histV || 1) < 2) S.histMonths = []; // older records lack the opponent's name: read the months again once
   S.sync.token = d.syncToken || ''; S.sync.gist = d.syncGist || '';
   if (!d.settings && touch) S.settings.depth = 'quick'; // phones and tablets start on the fast setting
@@ -471,6 +471,7 @@ function bumpAct(field) {
   store.set({ act: S.act });
 }
 async function gradeNow(p, correct) {
+  if (S.puzzle && S.puzzle.daily) return gradeDaily(p, correct);
   const g = R.gradePuzzle(S.puzzles[p.id] || p, correct, Date.now());
   if (g.made) { const m = S.settings.made || (S.settings.made = { n: 0, right: 0 }); m.n++; if (correct) m.right++; saveSettings(); }
   if (g.made && correct) delete S.puzzles[g.id]; else S.puzzles[g.id] = g; // a made-up puzzle has done its job once solved
@@ -483,7 +484,7 @@ function puzzlesHTML() {
   let h = '<div class="stats pzstats"><div><b>' + left.length + '</b><span>left from your games</span></div><div><b>' + (own.length - left.length) + '</b><span>finished</span></div><div><b>' + (tries ? Math.round(100 * right / tries) + '%' : '–') + '</b><span>right first time (' + tries + ' tries)</span></div></div>';
   const z = S.puzzle, tname = S.pzTheme ? R.THEMES[S.pzTheme].toLowerCase() : '';
   if (!z) {
-    h += themeChips();
+    h += dailyHTML() + '<h3>From your games</h3>' + themeChips();
     if (S.pzMaking) return h + '<div class="card"><h3 class="big">Making a puzzle…</h3><p>' + (tname ? 'You have finished every “' + esc(tname) + '” puzzle from your games' : 'You have finished every puzzle from your games') + ', so Stockfish is playing out new positions to find one. This can take up to a minute.</p><div class="row"><button class="btn ghost" data-act="pzQuit">Stop</button></div></div>';
     const sel = leftPuzzles(S.pzTheme), mine = sel.filter(p => !p.made).length;
     return h + '<div class="card"><p>Each puzzle is a position where you went wrong. Get it right on the first attempt and it is finished for good. Miss it and it keeps coming back until you do. When a type runs out, Blunder Lab makes up new puzzles of that type.</p>' +
@@ -491,38 +492,32 @@ function puzzlesHTML() {
       '<div class="row"><button class="btn" data-act="pzStart">' + (mine ? 'Start (' + mine + ' left' + (tname ? ', ' + esc(tname) : '') + ')' : 'Start made-up puzzles' + (tname ? ' (' + esc(tname) + ')' : '')) + '</button></div></div>';
   }
   const p = z.p, side = p.color === 'w' ? 'White' : 'Black', defend = p.made && (p.tags || []).some(t => t === 'allowedMate' || t.startsWith('hung'));
-  h += '<div class="card pz ' + z.state + '"><div class="lbl">' + (p.made ? 'Made-up puzzle · ' + side + ' to move · ' + p.phase : side + ' to move · vs ' + esc(p.opponent || '?') + ' · ' + esc(when(p.date)) + ' · ' + p.phase) + '</div>';
+  h += '<div class="card pz ' + z.state + '"><div class="lbl">' + (z.daily ? 'Daily puzzle · ' + R.THEMES[p.th] + ' · ' + side + ' to move' : p.made ? 'Made-up puzzle · ' + side + ' to move · ' + p.phase : side + ' to move · vs ' + esc(p.opponent || '?') + ' · ' + esc(when(p.date)) + ' · ' + p.phase) + '</div>';
   if (z.state === 'ask') h += (p.made ? '<h3>' + (defend ? 'Find the move that holds' : 'Find the best move') + '</h3><p>' + (defend ? 'Only one move keeps you out of trouble here.' : 'One move is clearly better than the rest.') + '</p>' :
     '<h3>Find a better move</h3><p>Here you played <b>' + esc(p.played) + '</b>, ' + (/^[aeiou]/.test(p.cls) ? 'an ' : 'a ') + p.cls + '. What should you have played?</p>') + '<div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
   else if (z.state === 'wrong') h += '<h3>Not that one</h3><p>' + esc(z.note || '') + ' Try again, or see the answer.</p><div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
-  else h += '<h3>' + (z.state === 'right' ? (z.clean ? 'Correct' : 'Got it') : 'The answer') + '</h3><p>' + esc(z.note || '') + '</p><p class="muted">Theme: ' + R.THEMES[themeOf(p)] + ' · ' + (z.clean ? 'Right first time, so this one is finished.' : 'It comes back until you get it first time.') + '</p>' +
+  else h += '<h3>' + (z.state === 'right' ? (z.clean ? 'Correct' : 'Got it') : 'The answer') + '</h3><p>' + esc(z.note || '') + '</p><p class="muted">Theme: ' + R.THEMES[themeOf(p)] + ' · ' + (z.daily ? (z.clean ? 'Right first time.' : 'You can retry it from the daily card.') : z.clean ? 'Right first time, so this one is finished.' : 'It comes back until you get it first time.') + '</p>' +
     '<div class="row"><button class="btn" data-act="pzNext">Next puzzle</button><button class="btn ghost" data-act="pzLine">Play through the line</button>' + (p.made ? '' : '<button class="btn ghost" data-act="pzGame">Open the game here</button>') + '</div>';
   return h + '</div><div class="row"><button class="link" data-act="pzQuit">Stop practising</button></div>';
 }
 
-/* Made-up puzzles: Stockfish plays games against itself with a careless move thrown in now and then, and every
-   position with one clearly best move becomes a puzzle. All of them are kept; the first of the wanted type is returned. */
 let genE = null, genTok = 0;
-async function makePuzzle(theme, ms, stop) {
+/* Plays games, Stockfish against itself with a careless move now and then, and hands every position with one clearly
+   best move to onPuzzle(p). Stops when onPuzzle returns true (that puzzle is returned), when time is up, or on stop(). */
+async function genLoop(ms, stop, onPuzzle) {
   if (!genE) genE = Engine.worker(ENGINE);
   await loadOpenings();
-  const until = Date.now() + ms, live2 = () => Date.now() < until && !stop();
-  let banked = false;
-  while (live2()) {
+  const until = Date.now() + ms, go = () => Date.now() < until && !stop();
+  while (go()) {
     const c = new Chess();
     if (openList && openList.length) { try { for (const s of openList[Math.floor(Math.random() * openList.length)][1].split(' ').slice(0, 10)) c.move(s); } catch (e) { /* start from wherever it got to */ } }
-    for (let n = 0; n < 70 && !c.isGameOver() && live2(); n++) {
+    for (let n = 0; n < 70 && !c.isGameOver() && go(); n++) {
       const fen = c.fen(), r = await genE.analyse(fen, { depth: 9, multipv: 2, movetime: 350 }), top = r.lines[0];
       if (!top || !top.pv || !top.pv.length) break;
       let p = R.madePuzzle(fen, r.lines);
-      if (p && !S.puzzles[p.id]) {
+      if (p && !S.puzzles[p.id] && !S.daily.list.some(x => x.id === p.id)) {
         p = R.madePuzzle(fen, (await genE.analyse(fen, { depth: 14, multipv: 2, movetime: 1500 })).lines); // look again, deeper, before trusting it
-        if (p) {
-          p.date = Date.now();
-          const hit = !theme || themeOf(p) === theme;
-          if (hit || (themeOf(p) !== 'other' && Object.values(S.puzzles).filter(x => x.made).length < 120)) { S.puzzles[p.id] = p; banked = true; } // spares of other types are kept for later, within reason
-          if (hit) { await store.set({ puzzles: S.puzzles }); return p; }
-        }
+        if (p) { p.date = Date.now(); p.th = R.themeOf(p); if (await onPuzzle(p)) return p; }
       }
       const e = R.expPts(top);
       if (top.mate == null && (e > 0.985 || e < 0.015)) break; // decided with no mate in sight: start another game
@@ -530,8 +525,75 @@ async function makePuzzle(theme, ms, stop) {
       try { c.move(slip ? { from: slip.from, to: slip.to, promotion: slip.promotion } : { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (err) { break; }
     }
   }
-  if (banked) await store.set({ puzzles: S.puzzles });
   return null;
+}
+// spare made-up puzzles of other types are kept for later, within reason
+const bankRoom = p => p.th !== 'other' && Object.values(S.puzzles).filter(x => x.made).length < 120;
+async function makePuzzle(theme, ms, stop) {
+  let banked = false;
+  const p = await genLoop(ms, stop, p => {
+    const hit = !theme || p.th === theme;
+    if (!hit && dailyTake(p)) return false;
+    if (hit || bankRoom(p)) { S.puzzles[p.id] = p; banked = true; }
+    return hit;
+  });
+  if (banked) await store.set({ puzzles: S.puzzles });
+  return p;
+}
+
+/* ---------- daily puzzles: five made-up ones of every type, new each day ---------- */
+
+const DAILY_N = 5;
+let dailyRun = false;
+const saveDaily = () => { touchSync(); return store.set({ daily: S.daily }); };
+function today() { const k = T.dayKey(Date.now()); if (S.daily.day !== k) S.daily = { day: k, t: Date.now(), list: [], res: {} }; return S.daily; }
+const dailyNeed = th => today().list.filter(p => p.th === th).length < DAILY_N;
+const dailyFull = () => Object.keys(R.THEMES).every(k => !dailyNeed(k));
+function dailyTake(p) {
+  if (!dailyNeed(p.th)) return false;
+  p.dly = true; S.daily.list.push(p); saveDaily();
+  if (S.tab === 'puzzles' && !S.puzzle && !S.pzMaking) renderPanel();
+  return true;
+}
+// Fills today's set in the background: first from spare puzzles already made, then by making new ones.
+async function fillDaily() {
+  if (dailyRun) return;
+  dailyRun = true;
+  try {
+    today();
+    let moved = false;
+    for (const p of Object.values(S.puzzles)) { if (!p.made || p.seen) continue; p.th = themeOf(p); if (dailyNeed(p.th)) { delete S.puzzles[p.id]; dailyTake(p); moved = true; } }
+    if (moved) await store.set({ puzzles: S.puzzles });
+    let banked = false;
+    if (!dailyFull()) await genLoop(15 * 60000, () => dailyFull() || document.hidden, p => { if (!dailyTake(p) && bankRoom(p)) { S.puzzles[p.id] = p; banked = true; } return false; });
+    if (banked) await store.set({ puzzles: S.puzzles });
+  } catch (e) { /* try again next time the app is opened */ }
+  dailyRun = false;
+  if (S.tab === 'puzzles' && !S.puzzle && !S.pzMaking) renderPanel();
+}
+async function gradeDaily(p, correct) {
+  const d = today(), was = d.res[p.id];
+  d.res[p.id] = correct ? (was === 'miss' ? 'fixed' : 'ok') : 'miss';
+  if (!was) { const m = S.settings.made || (S.settings.made = { n: 0, right: 0 }); m.n++; if (correct) m.right++; saveSettings(); bumpAct('pz'); }
+  if (dailyFull() && d.list.every(x => d.res[x.id])) { const o = S.act[d.day] || (S.act[d.day] = {}); o.daily = 1; store.set({ act: S.act }); }
+  await saveDaily();
+}
+function dailyNext(theme, retry) {
+  const d = today(), cur = S.puzzle && S.puzzle.p.id;
+  const p = d.list.find(x => x.id !== cur && (!theme || x.th === theme) && (retry ? d.res[x.id] === 'miss' : !d.res[x.id]));
+  if (!p) { S.puzzle = null; S.line = null; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render(); return; }
+  startPuzzle(p);
+  Object.assign(S.puzzle, { daily: true, dTheme: theme, retry: !!retry });
+  renderPanel();
+}
+function dailyHTML() {
+  const d = today(), keys = Object.keys(R.THEMES), total = keys.length * DAILY_N, tried = d.list.filter(p => d.res[p.id]).length, todo = d.list.length - tried;
+  const ok = d.list.filter(p => d.res[p.id] === 'ok').length, miss = d.list.filter(p => d.res[p.id] === 'miss').length, run = T.streak(S.act, 'daily', 1, Date.now());
+  return '<h3>Daily puzzles</h3><div class="card"><p>Five new made-up puzzles of every type, every day.' + (d.list.length < total ? ' ' + d.list.length + ' of ' + total + ' are ready' + (dailyRun ? '; the rest are being made while Blunder Lab is open.' : '.') : '') + '</p><div class="dgrid">' +
+    keys.map(k => { const ready = d.list.filter(p => p.th === k), dn = ready.filter(p => d.res[p.id]).length; return '<button data-act="dailyStart" data-v="' + k + '"' + (ready.length > dn ? '' : ' disabled') + '><span>' + R.THEMES[k] + '</span><b>' + (dn >= DAILY_N ? '✓' : dn + '/' + DAILY_N) + '</b></button>'; }).join('') + '</div>' +
+    '<div class="row"><button class="btn" data-act="dailyStart" data-v=""' + (todo ? '' : ' disabled') + '>' + (todo ? 'Start today’s puzzles (' + todo + ' to go)' : tried >= total ? 'All done for today' : 'Waiting for more puzzles') + '</button>' +
+    (miss ? '<button class="btn ghost" data-act="dailyRetry">Retry the ' + miss + ' I missed</button>' : '') + '</div>' +
+    (tried || run ? '<p class="muted">' + (tried ? 'Today: ' + ok + ' right first time of ' + tried + ' tried' : '') + (tried && run ? ' · ' : '') + (run ? run + '-day streak of full sets' : '') + '</p>' : '') + '</div>';
 }
 function stopMaking() { genTok++; if (S.pzMaking && genE) genE.stop(); S.pzMaking = null; }
 async function nextPuzzle() {
@@ -1002,7 +1064,7 @@ function openReportHTML() {
 let gist = null, syncTimer = null, remoteCache = null;
 function touchSync() { if (!S.sync.token) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 8000); }
 const madeOnly = () => { const o = {}; for (const k in S.puzzles) if (S.puzzles[k].made) o[k] = S.puzzles[k]; return o; }; // made-up puzzles stay on the device that made them
-const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
+const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, daily: S.daily, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
 const betterRv = (x, y) => (x.depth || 0) > (y.depth || 0) || ((x.depth || 0) === (y.depth || 0) && (x.at || 0) > (y.at || 0));
 async function syncNow() {
   if (!S.sync.token || S.sync.busy) return;
@@ -1014,10 +1076,10 @@ async function syncNow() {
     // puzzle progress, repertoire and the rest: merge item by item, then store whichever side was behind
     const mine = localState(), merged = Y.mergeState(mine, remote['state.json']);
     if (!Y.same(merged, Y.mergeState(mine, null))) {
-      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._cal = null;
+      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._cal = null;
       if (merged.user.v && (merged.user.t > (S.settings.userT || 0) || !S.settings.user.trim())) { S.settings.user = merged.user.v; S.settings.userT = merged.user.t; sets.settings = S.settings; }
       for (const g of merged.pasted) if (!S.games.some(x => x.id === g.id)) S.games.push(g);
-      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
+      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
     }
     if (!Y.same(merged, Y.mergeState(remote['state.json'], null))) out['state.json'] = merged;
     // reviews: take the ones this device lacks, send the ones the others lack
@@ -1340,7 +1402,10 @@ document.addEventListener('click', async e => {
     const ev = rv.evals[best ? S.ply - 1 : S.ply], base = best ? p.before : p.after;
     enterLine(base, ev.lines[0].pv, best ? 'Best line instead of ' + p.san : 'After ' + p.san, 1);
   }
+  else if (act === 'pzNext' && S.puzzle && S.puzzle.daily) dailyNext(S.puzzle.dTheme, S.puzzle.retry);
   else if (act === 'pzStart' || act === 'pzNext') nextPuzzle();
+  else if (act === 'dailyStart') { stopMaking(); dailyNext(a.dataset.v, false); }
+  else if (act === 'dailyRetry') { stopMaking(); dailyNext('', true); }
   else if (act === 'pzShow') puzzleDone(false, answerText(S.puzzle.p));
   else if (act === 'pzLine') enterLine(S.puzzle.p.fen, S.puzzle.p.pv, 'The answer', 1);
   else if (act === 'pzQuit') { stopMaking(); S.puzzle = null; S.line = null; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render(); }
@@ -1437,9 +1502,9 @@ document.addEventListener('keydown', e => {
   fresh = fresh.filter(g => !S.reviews[g.id]);
   if (fresh.length && S.settings.auto !== false && !want) reviewMany(fresh, true);
   setInterval(autoSync, 60000);
-  if (S.sync.token) syncNow();
+  (S.sync.token ? syncNow() : Promise.resolve()).then(() => setTimeout(fillDaily, 3000)); // after the first sync, so a set another device already made is used
   setInterval(syncNow, 180000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { autoSync(); syncNow(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { autoSync(); syncNow(); fillDaily(); } });
   if (isExt && chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg, from, reply) => { if (msg && msg.type === 'blunderlab-ping') { reply({ open: true }); autoSync(); } });
   if (want) { const m = S.games.find(g => g.url.endsWith('/' + want[1])); if (m) openGame(m); else { S.error = 'That game is not in your recent games. Load it from the Games tab or paste its PGN.'; renderStatus(); } }
 })();
