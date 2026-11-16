@@ -266,3 +266,17 @@ ol.tips li{margin:4px 0}
 }
 @media (pointer:coarse) and (min-width:861px){.left{width:min(calc(100vh - 280px),calc(100vw - 540px),720px)}}
 @supports (height:100dvh){@media (pointer:coarse) and (min-width:861px){.left{width:min(calc(100dvh - 280px),calc(100vw - 540px),720px)}}}
+
+/* 1.4: explain, head to head, goals, report card */
+.why{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.why p{margin:0 0 6px;font-size:14px}
+.h2h .orow{grid-template-columns:minmax(0,1fr) 0 auto}
+.goal{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px;align-items:end;margin:8px 0}
+.goal>div{display:flex;flex-direction:column;gap:5px;font-size:12.5px;padding-bottom:4px}
+.goal .track{flex:none;height:8px}
+table.rep td:first-child{white-space:normal}
+.slip{display:block;font-size:12px}
+.grade{display:inline-block;min-width:24px;text-align:center;border-radius:6px;padding:1px 5px;color:#fff;background:var(--forced)}
+.grade.gA{background:var(--best)}.grade.gB{background:var(--good)}.grade.gC{background:var(--inaccuracy)}.grade.gD{background:var(--mistake)}.grade.gF{background:var(--blunder)}
+.chips .tick{margin:0 0 0 2px}
+@media (max-width:860px){.goal{grid-template-columns:118px minmax(0,1fr)}}

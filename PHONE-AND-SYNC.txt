@@ -36,10 +36,13 @@ each one syncs by itself a few seconds after anything changes, and every few min
 
 WHAT SYNCS
 Reviews (with the games), puzzle progress, opening and endgame progress, your
-repertoire, game rating calibration, your chess.com username and your game history.
+goals and streaks, games against the engine, your repertoire, game rating calibration, your chess.com username and your game history.
 The review depth setting stays per device: phones start on Quick.
 
 GOOD TO KNOW
+- Offline: once the web app has been opened with a connection, it opens without one.
+  Puzzles, the trainer and saved reviews work; new games and syncing wait until you are
+  back online. Made-up puzzles stay on the device that made them.
 - Let the computer do the reviewing. It is much faster than a phone, it checks for new
   games every minute, and the finished review then appears on your phone.
 - If your phone's browser is not allowed to read chess.com directly, Blunder Lab says

@@ -385,3 +385,29 @@ export function endgameOf(meta, rv) {
   return { id: meta.id, fen: p.before, color: meta.color, goal, result: meta.result, opponent: meta.opponent, end: meta.end, ply: i,
     score: scoreText(ev, p.color === 'w'), failed: goal === 'win' ? meta.result !== 'win' : meta.result === 'loss' };
 }
+
+/* ---------- puzzles: done for good, and made-up ones ---------- */
+
+// A puzzle is finished once it was solved on the first attempt, the last time it was shown.
+export const mastered = p => (p.box || 0) >= 1;
+export { offered };
+/* A made-up puzzle from any position, given the engine's two best lines (scores for the side to move), or null when
+   the position has no clear single answer. Either a winning shot, or the only move that avoids a mate or saves a piece. */
+export function madePuzzle(fen, lines) {
+  const top = lines[0], sec = lines[1];
+  if (!top || !sec || !top.pv || !top.pv.length) return null;
+  const color = fen.split(' ')[1], eTop = expPts(top), eSec = expPts(sec), gap = eTop - eSec, tags = [];
+  const mate = top.mate > 0 && top.mate <= 4 && !(sec.mate > 0); // a short forced mate that only one move starts
+  if (!mate && (gap < 0.2 || eTop < 0.3)) return null;
+  if (mate) tags.push('missedMate');
+  else if (eTop >= 0.55) { if (eSec >= 0.9) return null; }
+  else {
+    if (gap < 0.25) return null;
+    if (sec.mate != null && sec.mate < 0) tags.push('allowedMate');
+    else if (offered(fen, color) >= 2) tags.push('hung:x');
+    else return null;
+  }
+  const parts = fen.split(' ');
+  return { id: 'gen:' + parts[0] + parts[1], made: true, game: '', ply: 0, fen, color, played: '', cls: '', loss: Math.round(gap * 100) / 100, answers: [top.pv[0]], pv: top.pv.slice(0, 8), tags,
+    opponent: '', date: 0, phase: phaseOf(fen, (+parts[5] || 1) * 2), box: 0, due: 0, seen: 0, right: 0, e: eTop };
+}

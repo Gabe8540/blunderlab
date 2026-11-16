@@ -35,7 +35,7 @@ export function histRecord(g, user, names) {
     if (n) op = n;
   }
   return { id: String(g.uuid || g.url), end: (g.end_time || 0) * 1000, tc: g.time_class || '', c: black ? 'b' : 'w', res: outcome(mine.result),
-    r: mine.rating || 0, o: opp.rating || 0, rated: g.rated !== false, mv: ok.join(' '), op };
+    r: mine.rating || 0, o: opp.rating || 0, rated: g.rated !== false, mv: ok.join(' '), op, opp: opp.username || '' };
 }
 
 /* ---------- opening tree of your own games ---------- */
@@ -171,4 +171,106 @@ export function repCheck(hist, rep) {
     if (!slipped && i >= 2 && cand.length) lines[cand[0]].kept++;
   }
   return { lines, slips: slips.sort((a, b) => b.end - a.end) };
+}
+
+/* ---------- head to head ---------- */
+
+// Your earlier games against one opponent, newest first. hist records carry opp (their username).
+export function headToHead(hist, name, exceptId) {
+  const who = (name || '').toLowerCase(), games = who ? hist.filter(h => h.id !== exceptId && (h.opp || '').toLowerCase() === who).sort((a, b) => b.end - a.end) : [];
+  const o = { n: games.length, w: 0, d: 0, l: 0, games };
+  games.forEach(h => { o[h.res === 'win' ? 'w' : h.res === 'draw' ? 'd' : 'l']++; });
+  return o;
+}
+
+/* ---------- why a move was wrong, in words ---------- */
+
+function material(fen, color) {
+  let s = 0;
+  for (const ch of fen.split(' ')[0]) { const v = VAL[ch.toLowerCase()]; if (v) s += (ch === ch.toUpperCase()) === (color === 'w') ? v : -v; }
+  return s;
+}
+// Plays a line far enough to see what it wins: about six plies, then on to the end of any exchange still going.
+function follow(fen, ucis) {
+  const c = new Chess(fen), moves = [];
+  for (const u of ucis || []) {
+    if (moves.length >= 6 && !moves[moves.length - 1].captured) break;
+    if (moves.length >= 10) break;
+    let m;
+    try { m = c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (e) { break; }
+    moves.push(m);
+  }
+  return { moves, fen: c.fen(), mate: c.isCheckmate() };
+}
+const worth = d => (d >= 8.5 ? 'a queen' : d >= 4.5 ? 'a rook' : d >= 2.5 ? 'a piece' : d >= 1.5 ? 'two pawns' : 'a pawn');
+const lower = s => s.charAt(0).toLowerCase() + s.slice(1);
+/* p: the ply played (readGame), r: its record (classify), ev / nx: engine results before and after it.
+   Returns sentences: what the best move does and wins, then what the played move allows and costs. */
+export function explainWhy(p, r, ev, nx) {
+  const out = [], me = p.color, base = material(p.before, me), best = ev && ev.lines && ev.lines[0], after = nx && nx.lines && nx.lines[0];
+  const from = (+p.before.split(' ')[5] - 1) * 2 + (me === 'b' ? 1 : 0);
+  if (best && best.pv && best.pv[0] && best.pv[0] !== p.uci) {
+    const L = follow(p.before, best.pv), m0 = L.moves[0];
+    if (m0) {
+      let s = 'The best move was ' + m0.san + '. ' + explainMove(m0);
+      const d = material(L.fen, me) - base, line = movesText(L.moves.map(m => m.san), from);
+      if (best.mate > 0) s += ' It forces checkmate in ' + best.mate + (L.moves.length > 1 ? ': ' + line + '.' : '.');
+      else if (d >= 1) s += ' After ' + line + ' you come out ' + worth(d) + ' ahead.';
+      else if (L.moves.length > 1) s += ' Play could go ' + line + ', and you ' + (r.eBest >= 0.7 ? 'are clearly better.' : r.eBest >= 0.45 ? 'keep a healthy position.' : 'limit the damage.');
+      out.push(s);
+    }
+  } else out.push(p.san + ' was the engine’s first choice, so there was nothing better.');
+  if (r.loss >= 0.05 && after && after.pv && after.pv.length) {
+    const L = follow(p.after, after.pv), m0 = L.moves[0];
+    if (m0) {
+      let s = 'Your move ' + p.san + ' allows ' + m0.san + ': ' + lower(explainMove(m0));
+      const d = base - material(L.fen, me), line = movesText([p.san].concat(L.moves.map(m => m.san)), from);
+      if (after.mate > 0) s += ' Your opponent then has a forced checkmate in ' + after.mate + '.';
+      else if (d >= 1) s += ' After ' + line + ' you end up ' + worth(d) + ' down.';
+      else s += ' Nothing drops at once, but after ' + line + ' your position is worse: about ' + Math.round(r.loss * 100) + '% of your winning chances are gone.';
+      out.push(s);
+    }
+  }
+  if (r.tags && r.tags.some(t => t.startsWith('hung'))) out.push('Habit to build: before letting go of a piece, check what your opponent can capture next.');
+  else if (r.tags && r.tags.some(t => t.startsWith('missedCapture') || t === 'missedMate')) out.push('Habit to build: look at every check and every capture you have before choosing a quiet move.');
+  return out;
+}
+
+/* ---------- opening report card ---------- */
+
+/* One row per opening family and colour, from reviewed games: how long you stay in known theory, how accurate your
+   first 12 moves are, and the move where you most often go wrong first. */
+export function openingReport(games, reviews) {
+  const by = {};
+  for (const g of games) {
+    const rv = reviews[g.id];
+    if (!rv || !rv.colors || g.bot || !g.opening) continue;
+    const key = g.color + (g.opening.split(':')[0]), o = by[key] || (by[key] = { name: g.opening.split(':')[0], c: g.color, n: 0, win: 0, book: 0, accSum: 0, accN: 0, slips: {} });
+    o.n++; if (g.result === 'win') o.win++;
+    let book = 0; while (book < rv.recs.length && rv.recs[book].cls === 'book') book++;
+    o.book += book;
+    let first = -1;
+    rv.recs.forEach((r, i) => {
+      if (i >= 24 || rv.colors[i] !== g.color || r.cls === 'book') return;
+      o.accSum += Math.max(0, Math.min(100, 103.1668 * Math.exp(-4.354 * r.loss) - 3.1669)); o.accN++;
+      if (first < 0 && ['inaccuracy', 'mistake', 'miss', 'blunder'].includes(r.cls)) first = i;
+    });
+    if (first >= 0) { const san = pgnSans(g.pgn, first + 1)[first] || '?', k = first + ' ' + san, s = o.slips[k] || (o.slips[k] = { ply: first, san, n: 0 }); s.n++; }
+  }
+  return Object.values(by).map(o => {
+    const acc = o.accN ? o.accSum / o.accN : null, slip = Object.values(o.slips).sort((a, b) => b.n - a.n || a.ply - b.ply)[0] || null;
+    return { name: o.name, c: o.c, n: o.n, win: o.win, book: o.book / o.n / 2, acc, grade: acc == null ? '–' : acc >= 90 ? 'A' : acc >= 80 ? 'B' : acc >= 70 ? 'C' : acc >= 60 ? 'D' : 'F', slip };
+  }).sort((a, b) => b.n - a.n).slice(0, 10);
+}
+
+/* ---------- goals: daily activity and streaks ---------- */
+
+export const dayKey = t => { const d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+// Days in a row, ending today (or yesterday, if today is not done yet), on which act[day][field] reached `need`.
+export function streak(act, field, need, now) {
+  let n = 0, t = now;
+  const ok = k => ((act[k] || {})[field] || 0) >= Math.max(1, need || 1);
+  if (!ok(dayKey(t))) t -= 864e5;
+  while (ok(dayKey(t))) { n++; t -= 864e5; }
+  return n;
 }

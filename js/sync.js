@@ -57,7 +57,8 @@ export class Gist {
 const stable = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x));
 export const same = (a, b) => stable(a) === stable(b);
 const pickMap = (a, b, better) => { const out = Object.assign({}, a || {}); for (const k in b || {}) out[k] = k in out ? (better(b[k], out[k]) ? b[k] : out[k]) : b[k]; return out; };
-/* state: { user: { v, t }, puzzles: { id: p }, opProg: { name: { n, clean, last } }, rep: { t, list }, calib: { id: { w, b, t } }, endProg: { id: { n, ok } }, pasted: [meta] }
+/* goals: { t, rating, pz, rv }, act: { 'YYYY-MM-DD': { pz } } (each day keeps its highest count).
+   state: { user: { v, t }, puzzles: { id: p }, opProg: { name: { n, clean, last } }, rep: { t, list }, calib: { id: { w, b, t } }, endProg: { id: { n, ok } }, pasted: [meta] }
    Nothing is ever lost by merging: the copy with more practice behind it wins, item by item. */
 export function mergeState(a, b) {
   a = a || {}; b = b || {};
@@ -71,6 +72,8 @@ export function mergeState(a, b) {
     rep: newer(a.rep, b.rep) || { t: 0, list: [] },
     calib: pickMap(a.calib, b.calib, (x, y) => (x.t || 0) > (y.t || 0)),
     endProg: pickMap(a.endProg, b.endProg, (x, y) => (x.n || 0) > (y.n || 0)),
+    goals: newer(a.goals, b.goals) || { t: 0 },
+    act: (() => { const out = {}; for (const src of [a.act || {}, b.act || {}]) for (const day in src) { const o = out[day] || (out[day] = {}); for (const k in src[day]) o[k] = Math.max(o[k] || 0, src[day][k]); } return out; })(),
     pasted: Object.values(pasted)
   };
 }

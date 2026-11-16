@@ -23,7 +23,8 @@ const S = {
   hist: [], histMonths: [], histUser: '', eloTc: '',   // hist: one small record per game, two years back
   train: null,                       // a trainer session on the board
   tr: { sub: 'opp', color: 'w', tc: '', q: '', course: null }, opProg: {},
-  rep: { t: 0, list: [] }, calib: {}, endProg: {}, scout: null, pzTheme: '',
+  rep: { t: 0, list: [] }, calib: {}, endProg: {}, scout: null, pzTheme: '', pzMaking: null, pzMsg: '',
+  goals: { t: 0 }, act: {}, explain: '', drillMsg: '',
   sync: { token: '', gist: '', last: 0, error: '', busy: false }
 };
 let bg, live, liveToken = 0, cancelBatch = false;
@@ -37,6 +38,8 @@ async function loadAll() {
   S.puzzles = d.puzzles || {};
   S.hist = d.hist || []; S.histMonths = d.histMonths || []; S.histUser = d.histUser || ''; S.opProg = d.opProg || {};
   S.rep = d.rep || { t: 0, list: [] }; S.calib = d.calib || {}; S.endProg = d.endProg || {};
+  S.goals = d.goals || { t: 0 }; S.act = d.act || {};
+  if ((d.histV || 1) < 2) S.histMonths = []; // older records lack the opponent's name: read the months again once
   S.sync.token = d.syncToken || ''; S.sync.gist = d.syncGist || '';
   if (!d.settings && touch) S.settings.depth = 'quick'; // phones and tablets start on the fast setting
   for (const k in d) if (k.startsWith('rv:')) S.reviews[k.slice(3)] = d[k];
@@ -101,7 +104,7 @@ async function syncGames(mode) {
     metaMonths = new Set(all.slice(-4)); settled = all.slice(0, -2);
     months = all.filter((m, i) => i >= all.length - 2 || !S.histMonths.includes(m)).reverse();
   }
-  const known = new Set(S.games.map(g => g.id)), hk = new Set(S.hist.map(h => h.id)), fresh = [];
+  const known = new Set(S.games.map(g => g.id)), hk = new Map(S.hist.map((h, i) => [h.id, i])), fresh = [];
   for (let i = 0; i < months.length; i++) {
     if (mode !== 'quick' && S.busy) { S.busy.done = i; S.busy.total = months.length; renderStatus(); }
     let d;
@@ -109,7 +112,8 @@ async function syncGames(mode) {
     for (const g of d.games || []) {
       if ((g.rules && g.rules !== 'chess') || !g.pgn) continue;
       const id = String(g.uuid || g.url);
-      if (!hk.has(id)) { const h = T.histRecord(g, user, S.book.names); if (h) { S.hist.push(h); hk.add(id); } }
+      if (!hk.has(id)) { const h = T.histRecord(g, user, S.book.names); if (h) { hk.set(id, S.hist.length); S.hist.push(h); } }
+      else if (S.hist[hk.get(id)].opp === undefined) { const h = T.histRecord(g, user, S.book.names); if (h) S.hist[hk.get(id)] = h; }
       if (!known.has(id) && metaMonths.has(months[i])) { const meta = toMeta(g, user); if (meta) { fresh.push(meta); known.add(id); } }
     }
     if (settled.includes(months[i]) && !S.histMonths.includes(months[i])) S.histMonths.push(months[i]);
@@ -119,7 +123,7 @@ async function syncGames(mode) {
   S.games = S.games.concat(fresh).sort((a, b) => b.end - a.end).filter(g => g.pasted || S.reviews[g.id] || room-- > 0);
   S.histUser = lower;
   const newest = S.games.reduce((a, g) => (g.pasted ? a : Math.max(a, g.end)), 0);
-  await store.set({ games: S.games, hist: S.hist, histMonths: S.histMonths, histUser: lower, lastEnd: newest });
+  await store.set(Object.assign({ games: S.games, hist: S.hist, histMonths: S.histMonths, histUser: lower, lastEnd: newest }, mode === 'quick' ? {} : { histV: 2 }));
   return prevNewest ? fresh.filter(g => g.end > prevNewest && S.games.includes(g)) : [];
 }
 // Looks for games that have just finished (on any device) and reviews them without being asked.
@@ -425,12 +429,13 @@ function commentHTML() {
   return '<div class="comment c-' + r.cls + '">' + badge(r.cls) + '<div><b>' + esc(p.san) + ' is ' + (/^[aeiou]/.test(r.cls) ? 'an ' : 'a ') + (r.cls === 'book' ? 'book move' : r.cls === 'forced' ? 'forced move' : r.cls === 'best' ? 'best move' : R.LABEL[r.cls].toLowerCase() + (['brilliant', 'great', 'excellent', 'good'].includes(r.cls) ? ' move' : '')) + '</b>' +
     '<p>' + esc(R.explain(r, p, bestSan)) + '</p><div class="row">' +
     (canBest ? '<button class="btn small" data-act="lineBest">Show the best line</button>' : '') +
-    (canNext ? '<button class="btn small ghost" data-act="lineNext">' + (r.loss >= 0.05 ? 'Show how it gets punished' : 'Show what comes next') + '</button>' : '') + '</div></div></div>';
+    (canNext ? '<button class="btn small ghost" data-act="lineNext">' + (r.loss >= 0.05 ? 'Show how it gets punished' : 'Show what comes next') + '</button>' : '') +
+    (['book', 'forced'].includes(r.cls) || S.explain === S.cur.meta.id + ':' + S.ply ? '' : '<button class="btn small ghost" data-act="explain">Explain this move</button>') + '</div>' + whyHTML() + '</div></div>';
 }
 function reviewHTML() {
   if (!S.cur) return '<p class="empty">Pick a game from the Games tab to review it.</p>';
   const { meta, game, rv } = S.cur;
-  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>';
+  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + h2hHTML(meta);
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
   h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() +
@@ -452,25 +457,95 @@ function movesList() {
 }
 
 const themeOf = p => p.th || (p.th = R.themeOf(p));
-const pzPool = () => Object.values(S.puzzles).filter(p => !S.pzTheme || themeOf(p) === S.pzTheme);
-function duePuzzles() {
-  const now = Date.now();
-  return pzPool().filter(p => (p.due || 0) <= now).sort((a, b) => (a.seen || 0) - (b.seen || 0) || b.loss - a.loss);
+const ownPuzzles = () => Object.values(S.puzzles).filter(p => !p.made);
+// What is still to do: every puzzle not yet solved on the first attempt. Your own games first, least-seen first.
+function leftPuzzles(theme) {
+  return Object.values(S.puzzles).filter(p => !R.mastered(p) && (!theme || themeOf(p) === theme))
+    .sort((a, b) => (a.made ? 1 : 0) - (b.made ? 1 : 0) || (a.seen || 0) - (b.seen || 0) || b.loss - a.loss);
+}
+function bumpAct(field) {
+  const k = T.dayKey(Date.now()), o = S.act[k] || (S.act[k] = {});
+  o[field] = (o[field] || 0) + 1;
+  const old = T.dayKey(Date.now() - 120 * 864e5);
+  for (const d in S.act) if (d < old) delete S.act[d];
+  store.set({ act: S.act });
+}
+async function gradeNow(p, correct) {
+  const g = R.gradePuzzle(S.puzzles[p.id] || p, correct, Date.now());
+  if (g.made) { const m = S.settings.made || (S.settings.made = { n: 0, right: 0 }); m.n++; if (correct) m.right++; saveSettings(); }
+  if (g.made && correct) delete S.puzzles[g.id]; else S.puzzles[g.id] = g; // a made-up puzzle has done its job once solved
+  bumpAct('pz');
+  await savePuzzles();
 }
 function puzzlesHTML() {
-  const all = Object.values(S.puzzles), due = duePuzzles(), seen = all.filter(p => p.seen), right = all.reduce((a, p) => a + (p.right || 0), 0), tries = all.reduce((a, p) => a + (p.seen || 0), 0);
-  if (!all.length) return '<p class="empty">No puzzles yet. Review a game and every mistake or blunder you made becomes a puzzle here.</p>';
-  let h = '<div class="stats pzstats"><div><b>' + due.length + '</b><span>due now</span></div><div><b>' + all.length + '</b><span>from your games</span></div><div><b>' + (tries ? Math.round(100 * right / tries) + '%' : '–') + '</b><span>solved (' + seen.length + ' tried)</span></div></div>';
-  const z = S.puzzle;
-  if (!z) h += themeChips(all);
-  if (!z) return h + '<div class="card"><p>Each puzzle is a position where you went wrong. Find the move you should have played. Ones you solve come back after 1, 3, 7, 16 and 35 days; ones you miss come back the same day.</p>' +
-    '<div class="row"><button class="btn" data-act="pzStart"' + (due.length ? '' : ' disabled') + '>' + (due.length ? 'Start (' + due.length + ' due' + (S.pzTheme ? ', ' + R.THEMES[S.pzTheme].toLowerCase() : '') + ')' : 'Nothing due right now') + '</button>' + (due.length ? '' : '<button class="btn ghost" data-act="pzAny">Practise anyway</button>') + '</div></div>';
-  const p = z.p, side = p.color === 'w' ? 'White' : 'Black';
-  h += '<div class="card pz ' + z.state + '"><div class="lbl">' + side + ' to move · vs ' + esc(p.opponent || '?') + ' · ' + esc(when(p.date)) + ' · ' + p.phase + '</div>';
-  if (z.state === 'ask') h += '<h3>Find a better move</h3><p>Here you played <b>' + esc(p.played) + '</b>, ' + (/^[aeiou]/.test(p.cls) ? 'an ' : 'a ') + p.cls + '. What should you have played?</p><div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
+  const own = ownPuzzles(), left = own.filter(p => !R.mastered(p)), made = S.settings.made || { n: 0, right: 0 };
+  const right = own.reduce((a, p) => a + (p.right || 0), 0) + made.right, tries = own.reduce((a, p) => a + (p.seen || 0), 0) + made.n;
+  let h = '<div class="stats pzstats"><div><b>' + left.length + '</b><span>left from your games</span></div><div><b>' + (own.length - left.length) + '</b><span>finished</span></div><div><b>' + (tries ? Math.round(100 * right / tries) + '%' : '–') + '</b><span>right first time (' + tries + ' tries)</span></div></div>';
+  const z = S.puzzle, tname = S.pzTheme ? R.THEMES[S.pzTheme].toLowerCase() : '';
+  if (!z) {
+    h += themeChips();
+    if (S.pzMaking) return h + '<div class="card"><h3 class="big">Making a puzzle…</h3><p>' + (tname ? 'You have finished every “' + esc(tname) + '” puzzle from your games' : 'You have finished every puzzle from your games') + ', so Stockfish is playing out new positions to find one. This can take up to a minute.</p><div class="row"><button class="btn ghost" data-act="pzQuit">Stop</button></div></div>';
+    const sel = leftPuzzles(S.pzTheme), mine = sel.filter(p => !p.made).length;
+    return h + '<div class="card"><p>Each puzzle is a position where you went wrong. Get it right on the first attempt and it is finished for good. Miss it and it keeps coming back until you do. When a type runs out, Blunder Lab makes up new puzzles of that type.</p>' +
+      (S.pzMsg ? '<p><b>' + esc(S.pzMsg) + '</b></p>' : '') +
+      '<div class="row"><button class="btn" data-act="pzStart">' + (mine ? 'Start (' + mine + ' left' + (tname ? ', ' + esc(tname) : '') + ')' : 'Start made-up puzzles' + (tname ? ' (' + esc(tname) + ')' : '')) + '</button></div></div>';
+  }
+  const p = z.p, side = p.color === 'w' ? 'White' : 'Black', defend = p.made && (p.tags || []).some(t => t === 'allowedMate' || t.startsWith('hung'));
+  h += '<div class="card pz ' + z.state + '"><div class="lbl">' + (p.made ? 'Made-up puzzle · ' + side + ' to move · ' + p.phase : side + ' to move · vs ' + esc(p.opponent || '?') + ' · ' + esc(when(p.date)) + ' · ' + p.phase) + '</div>';
+  if (z.state === 'ask') h += (p.made ? '<h3>' + (defend ? 'Find the move that holds' : 'Find the best move') + '</h3><p>' + (defend ? 'Only one move keeps you out of trouble here.' : 'One move is clearly better than the rest.') + '</p>' :
+    '<h3>Find a better move</h3><p>Here you played <b>' + esc(p.played) + '</b>, ' + (/^[aeiou]/.test(p.cls) ? 'an ' : 'a ') + p.cls + '. What should you have played?</p>') + '<div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
   else if (z.state === 'wrong') h += '<h3>Not that one</h3><p>' + esc(z.note || '') + ' Try again, or see the answer.</p><div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
-  else h += '<h3>' + (z.state === 'right' ? (z.first ? 'Correct' : 'Got it') : 'The answer') + '</h3><p>' + esc(z.note || '') + '</p><p class="muted">Theme: ' + R.THEMES[themeOf(p)] + '</p><div class="row"><button class="btn" data-act="pzNext">Next puzzle</button><button class="btn ghost" data-act="pzLine">Play through the line</button><button class="btn ghost" data-act="pzGame">Open the game here</button></div>';
+  else h += '<h3>' + (z.state === 'right' ? (z.clean ? 'Correct' : 'Got it') : 'The answer') + '</h3><p>' + esc(z.note || '') + '</p><p class="muted">Theme: ' + R.THEMES[themeOf(p)] + ' · ' + (z.clean ? 'Right first time, so this one is finished.' : 'It comes back until you get it first time.') + '</p>' +
+    '<div class="row"><button class="btn" data-act="pzNext">Next puzzle</button><button class="btn ghost" data-act="pzLine">Play through the line</button>' + (p.made ? '' : '<button class="btn ghost" data-act="pzGame">Open the game here</button>') + '</div>';
   return h + '</div><div class="row"><button class="link" data-act="pzQuit">Stop practising</button></div>';
+}
+
+/* Made-up puzzles: Stockfish plays games against itself with a careless move thrown in now and then, and every
+   position with one clearly best move becomes a puzzle. All of them are kept; the first of the wanted type is returned. */
+let genE = null, genTok = 0;
+async function makePuzzle(theme, ms, stop) {
+  if (!genE) genE = Engine.worker(ENGINE);
+  await loadOpenings();
+  const until = Date.now() + ms, live2 = () => Date.now() < until && !stop();
+  let banked = false;
+  while (live2()) {
+    const c = new Chess();
+    if (openList && openList.length) { try { for (const s of openList[Math.floor(Math.random() * openList.length)][1].split(' ').slice(0, 10)) c.move(s); } catch (e) { /* start from wherever it got to */ } }
+    for (let n = 0; n < 70 && !c.isGameOver() && live2(); n++) {
+      const fen = c.fen(), r = await genE.analyse(fen, { depth: 9, multipv: 2, movetime: 350 }), top = r.lines[0];
+      if (!top || !top.pv || !top.pv.length) break;
+      let p = R.madePuzzle(fen, r.lines);
+      if (p && !S.puzzles[p.id]) {
+        p = R.madePuzzle(fen, (await genE.analyse(fen, { depth: 14, multipv: 2, movetime: 1500 })).lines); // look again, deeper, before trusting it
+        if (p) {
+          p.date = Date.now();
+          const hit = !theme || themeOf(p) === theme;
+          if (hit || (themeOf(p) !== 'other' && Object.values(S.puzzles).filter(x => x.made).length < 120)) { S.puzzles[p.id] = p; banked = true; } // spares of other types are kept for later, within reason
+          if (hit) { await store.set({ puzzles: S.puzzles }); return p; }
+        }
+      }
+      const e = R.expPts(top);
+      if (top.mate == null && (e > 0.985 || e < 0.015)) break; // decided with no mate in sight: start another game
+      const legal = c.moves({ verbose: true }), slip = Math.random() < 0.3 ? legal[Math.floor(Math.random() * legal.length)] : null, u = top.pv[0];
+      try { c.move(slip ? { from: slip.from, to: slip.to, promotion: slip.promotion } : { from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (err) { break; }
+    }
+  }
+  if (banked) await store.set({ puzzles: S.puzzles });
+  return null;
+}
+function stopMaking() { genTok++; if (S.pzMaking && genE) genE.stop(); S.pzMaking = null; }
+async function nextPuzzle() {
+  const cur = S.puzzle && S.puzzle.p.id, theme = S.pzTheme, next = leftPuzzles(theme).find(p => p.id !== cur);
+  S.pzMsg = '';
+  if (next) return startPuzzle(next);
+  const tok = ++genTok;
+  S.puzzle = null; S.line = null; S.pzMaking = { theme }; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render();
+  let p = null;
+  try { p = await makePuzzle(theme, 75000, () => tok !== genTok); } catch (e) { /* reported below */ }
+  if (tok !== genTok) return;
+  S.pzMaking = null;
+  if (p) startPuzzle(p);
+  else { S.pzMsg = 'No ' + (theme ? '“' + R.THEMES[theme].toLowerCase() + '” ' : '') + 'puzzle turned up this time. Press Start to try again, or pick another type.'; render(); }
 }
 
 function insightsHTML() {
@@ -478,7 +553,7 @@ function insightsHTML() {
   const I = R.insights(S.games, S.reviews), pct = (a, n) => (n ? Math.round(100 * a / n) : 0);
   const wld = o => '<span class="wld"><i class="w" style="flex:' + o.win + '"></i><i class="d" style="flex:' + o.draw + '"></i><i class="l" style="flex:' + o.loss + '"></i></span><span class="muted">' + o.win + 'W ' + o.draw + 'D ' + o.loss + 'L</span>';
   let h = '<div class="stats"><div><b>' + I.total.n + '</b><span>games loaded</span></div><div><b>' + pct(I.total.win, I.total.n) + '%</b><span>won</span></div><div><b>' + (I.accuracy != null ? I.accuracy + '%' : '–') + '</b><span>accuracy (' + I.reviewed + ' reviewed)</span></div></div>';
-  h += weeklyHTML() + eloHTML();
+  h += weeklyHTML() + eloHTML() + goalsHTML();
   if (!I.reviewed) h += '<div class="card"><p>Review a few games to unlock advice. The more games reviewed, the better the advice.</p><button class="btn" data-act="batch">Review all</button></div>';
   else {
     h += '<h3>What to work on</h3>' + (I.tips.length ? I.tips.map((t, i) => '<div class="card tip"><b>' + (i + 1) + '. ' + esc(t.title) + '</b><p>' + esc(t.text) + '</p></div>').join('') : '<div class="card"><p>No clear pattern yet. Review more games.</p></div>') +
@@ -487,7 +562,7 @@ function insightsHTML() {
       '<h3>Where the errors happen</h3><div class="card"><table><tr><th>Phase</th><th>Moves</th><th>Big errors</th><th>Per 10 moves</th></tr>' + ['opening', 'middlegame', 'endgame'].map(k => { const p = I.phases[k]; return '<tr><td>' + k.charAt(0).toUpperCase() + k.slice(1) + '</td><td>' + p.moves + '</td><td>' + p.bad + '</td><td>' + (p.moves ? (10 * p.bad / p.moves).toFixed(1) : '–') + '</td></tr>'; }).join('') + '</table>' +
       '<p class="muted">Pieces left hanging: ' + I.tags.hung + ' · free captures passed up: ' + I.tags.missedCapture + ' · mates allowed: ' + I.tags.allowedMate + ' · mates missed: ' + I.tags.missedMate + '</p></div>';
   }
-  h += themesHTML() + clockStatsHTML();
+  h += themesHTML() + clockStatsHTML() + openReportHTML();
   h += '<h3>Results</h3><div class="card"><div class="orow"><span>As White</span>' + wld(I.byColor.w) + '</div><div class="orow"><span>As Black</span>' + wld(I.byColor.b) + '</div></div>';
   if (I.openings.length) h += '<h3>Your openings</h3><div class="card">' + I.openings.map(o => '<div class="orow"><span>' + esc(o.name) + '</span>' + wld(o) + '</div>').join('') + '</div>';
   return h;
@@ -539,8 +614,8 @@ const myTurn = z => !z.done && !z.busy && z.c.turn() === z.color;
 const quick = fen => live.analyse(fen, { depth: 12, multipv: 1, movetime: 1200 });
 function endTrain(z) {
   z.done = true; z.busy = false; z.arrow = null;
-  const won = z.c.isCheckmate() && z.c.turn() !== z.color, lost = z.c.isCheckmate() && !won;
-  z.msg = won ? 'Checkmate. You won.' : lost ? 'Checkmate. You lost this one.' : 'Draw.';
+  const mate = z.c.isCheckmate(), won = !z.resigned && mate && z.c.turn() !== z.color, lost = !!z.resigned || (mate && !won);
+  z.msg = z.resigned ? 'You resigned.' : won ? 'Checkmate. You won.' : lost ? 'Checkmate. You lost this one.' : 'Draw.';
   const e = z.opt && z.opt.end;
   if (e) {
     const ok = e.goal === 'win' ? won : !lost, p = S.endProg[e.id] || { n: 0, ok: 0 };
@@ -548,6 +623,7 @@ function endTrain(z) {
     z.msg += ok ? (e.goal === 'win' ? ' You converted it.' : ' You held it.') : (e.goal === 'win' ? ' This was a winning position: try it again.' : ' This could be held: try it again.');
     z.fb = { cls: ok ? 'best' : 'miss', text: ok ? 'Goal reached.' : 'Goal missed.' };
   }
+  if (z.opt && z.opt.bot) { finishBot(z, won, lost); z.opp = z.botMeta ? (z.sans.length >= 10 ? 'The game is saved and being reviewed.' : 'The game is saved on the Games tab.') : ''; }
   render();
 }
 
@@ -558,13 +634,13 @@ function startSpar(color, sans, opt) {
   const z = newSession('spar', color);
   z.opt = opt = opt || {};
   if (opt.fen) { z.c = new Chess(opt.fen); const p = opt.fen.split(' '); z.from = (+p[5] - 1) * 2 + (p[1] === 'b' ? 1 : 0); }
-  z.tree = z.node = opt.fen ? null : opt.tree || T.buildTree(S.hist, color, S.tr.tc);
+  z.tree = z.node = opt.fen || opt.bot ? null : opt.tree || T.buildTree(S.hist, color, S.tr.tc);
   try { for (const s of sans || []) pushMove(z, s); } catch (e) { /* a move that no longer fits: start from where it stopped */ }
-  z.msg = opt.end ? 'Your move.' : z.sans.length ? 'Your move. Play on from here.' : 'Your move. Play your opening.';
-  z.opp = opt.end ? (opt.end.goal === 'win' ? 'You were winning here (' + opt.end.score + '). Convert it against Stockfish at full strength.' : 'This was level (' + opt.end.score + '). Hold the draw, or better, against Stockfish at full strength.') :
+  z.msg = opt.end || opt.bot ? 'Your move.' : z.sans.length ? 'Your move. Play on from here.' : 'Your move. Play your opening.';
+  z.opp = opt.bot ? 'Stockfish is set to about ' + opt.bot.elo + '. No hints and no take-backs. The game is reviewed when it ends.' : opt.end ? (opt.end.goal === 'win' ? 'You were winning here (' + opt.end.score + '). Convert it against Stockfish at full strength.' : 'This was level (' + opt.end.score + '). Hold the draw, or better, against Stockfish at full strength.') :
     opt.who ? 'The replies are ' + opt.who + '’s own moves, as often as they played them.' : 'The replies come from your real opponents, as often as they played them.';
   render();
-  if (z.c.turn() !== color) oppMove(z); else z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
+  if (z.c.turn() !== color) oppMove(z); else if (!opt.bot) z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
 }
 async function oppMove(z) {
   if (z.c.isGameOver()) return endTrain(z);
@@ -582,16 +658,15 @@ async function oppMove(z) {
     let r;
     if (z.opt.strong) r = await live.analyse(z.c.fen(), { depth: 14, multipv: 1, movetime: 900 });
     else {
-      const elo = myElo();
-      if (!sparE) {
-        sparE = Engine.worker(ENGINE);
-        if (elo >= 1320) { sparE.option('UCI_LimitStrength', 'true'); sparE.option('UCI_Elo', Math.min(3190, elo)); } else sparE.option('Skill Level', 0);
-      }
-      r = await sparE.analyse(z.c.fen(), { depth: elo >= 1320 ? 12 : Math.max(1, Math.min(6, Math.round((elo - 300) / 170))), movetime: 800 });
+      const elo = z.opt.bot ? z.opt.bot.elo : myElo();
+      // far below Stockfish's weakest setting, an occasional careless move stands in for the errors a player of that rating makes
+      const loose = z.opt.bot && elo < 1100 && Math.random() < Math.min(0.2, (1100 - elo) / 3000) ? z.c.moves({ verbose: true }) : [];
+      if (loose.length) { const m = loose[Math.floor(Math.random() * loose.length)]; r = { best: m.from + m.to + (m.promotion || '') }; await sleep(500); }
+      else r = await weakEngine(elo).analyse(z.c.fen(), { depth: elo >= 1320 ? 12 : Math.max(1, Math.min(6, Math.round((elo - 300) / 170))), movetime: 800 });
     }
     if (!r.best || r.best === '(none)') return endTrain(z);
     mv = { from: r.best.slice(0, 2), to: r.best.slice(2, 4), promotion: r.best.slice(4, 5) || undefined };
-    note = z.opt.strong ? '@' : first ? (who ? 'No game of ' + who + '’s reaches this position' : 'None of your games reach this position') + ', so Stockfish plays from here, turned down to roughly your level.' : '@';
+    note = z.opt.strong || z.opt.bot ? '@' : first ? (who ? 'No game of ' + who + '’s reaches this position' : 'None of your games reach this position') + ', so Stockfish plays from here, turned down to roughly your level.' : '@';
   }
   if (S.train !== z) return;
   let m;
@@ -599,13 +674,14 @@ async function oppMove(z) {
   z.opp = note === '@' ? 'Stockfish replies ' + m.san + '.' : note;
   if (z.c.isGameOver()) return endTrain(z);
   z.busy = false; z.msg = 'Your move.';
-  z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
+  if (!z.opt.bot) z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
   render();
 }
 async function sparMove(z, from, to, promo) {
   const before = z.c.fen(), nodeBefore = z.node, wasBook = inBook(before);
   let m;
   try { m = pushMove(z, { from, to, promotion: promo }); } catch (e) { renderBoard(); return; }
+  if (z.opt.bot) { z.fb = null; z.opp = ''; return oppMove(z); } // a real game: no verdict on each move
   z.busy = true; z.fb = null; z.opp = ''; z.msg = 'Checking your move…'; render();
   const bits = [];
   let cls = 'good';
@@ -703,13 +779,15 @@ function lineRow(l, o) { // o: { act, side, they } for a scouted player's lines
     '<button class="btn small ghost" data-act="' + (o.act || 'trFrom') + '"' + (o.side ? ' data-side="' + o.side + '"' : '') + ' data-line="' + esc(l.sans.join(' ')) + '">Play it</button></div>';
 }
 function trainSessionHTML() {
+  if (S.train.mode === 'drill') return drillHTML();
   const z = S.train, side = z.color === 'w' ? 'White' : 'Black', spar = z.mode === 'spar';
   const tone = !z.fb ? '' : ['best', 'good'].includes(z.fb.cls) ? 'right' : z.fb.cls === 'inaccuracy' ? 'shown' : 'wrong';
-  let h = '<div class="card pz ' + tone + '"><div class="lbl">' + (spar ? (z.opt.end ? 'Endgame practice' : z.opt.who ? 'Playing ' + esc(z.opt.who) : 'Playing your opponents') : z.mode === 'learn' ? 'Learning the line' : 'Testing the line') + ' · you are ' + side + '</div>' +
+  let h = '<div class="card pz ' + tone + '"><div class="lbl">' + (spar ? (z.opt.bot ? 'Game against Stockfish ' + z.opt.bot.elo : z.opt.end ? 'Endgame practice' : z.opt.who ? 'Playing ' + esc(z.opt.who) : 'Playing your opponents') : z.mode === 'learn' ? 'Learning the line' : 'Testing the line') + ' · you are ' + side + '</div>' +
     '<h3>' + esc(spar ? (z.opt.end ? (z.opt.end.goal === 'win' ? 'Win this position' : 'Hold this position') : z.opening || 'Starting position') : z.name) + '</h3>' + (!spar && z.opening ? '<p class="muted">You are now in: ' + esc(z.opening) + '</p>' : '') +
     '<p class="trmoves">' + (z.sans.length ? esc(T.movesText(z.sans, z.from || 0)) : '<span class="muted">No moves yet.</span>') + '</p>' +
     (z.fb ? '<p class="fb">' + badge(z.fb.cls) + '<span>' + esc(z.fb.text) + '</span></p>' : '') + (z.opp ? '<p>' + esc(z.opp) + '</p>' : '') + '<p><b>' + esc(z.msg) + '</b></p><div class="row">';
-  if (spar) h += (z.sans.length ? '<button class="btn ghost" data-act="trUndo"' + (z.busy ? ' disabled' : '') + '>Take back</button>' : '') + '<button class="btn ghost" data-act="trAgain">Start again</button>';
+  if (spar && z.opt.bot) h += z.done ? (z.botMeta ? '<button class="btn" data-act="botReview">See the review</button>' : '') + '<button class="btn ghost" data-act="trAgain">Play again</button>' : '<button class="btn ghost" data-act="botResign"' + (z.sans.length && !z.busy ? '' : ' disabled') + '>Resign</button>';
+  else if (spar) h += (z.sans.length ? '<button class="btn ghost" data-act="trUndo"' + (z.busy ? ' disabled' : '') + '>Take back</button>' : '') + '<button class="btn ghost" data-act="trAgain">Start again</button>';
   else if (z.done) h += '<button class="btn" data-act="' + (z.mode === 'learn' ? 'trTest' : 'trTest') + '">' + (z.mode === 'learn' ? 'Test me' : 'Test again') + '</button><button class="btn ghost" data-act="trLearn">Show me again</button><button class="btn ghost" data-act="trPlayOn">Play on against my opponents</button>';
   else h += (z.mode === 'test' && !z.arrow ? '<button class="btn ghost" data-act="trShow"' + (myTurn(z) ? '' : ' disabled') + '>Show the move</button>' : '') + '<button class="btn ghost" data-act="' + (z.mode === 'learn' ? 'trLearn' : 'trTest') + '">Start again</button>';
   h += '</div></div>';
@@ -735,7 +813,9 @@ const openRow = (name, label, extra) => '<button class="orow2" data-open="' + es
 function trainerHTML() {
   if (S.train) return trainSessionHTML();
   const t = S.tr;
-  let h = '<div class="seg">' + [['opp', 'My opponents'], ['scout', 'Scout'], ['open', 'Openings'], ['rep', 'Repertoire'], ['end', 'Endgames']].map(x => '<button data-act="trSub" data-v="' + x[0] + '" aria-pressed="' + (t.sub === x[0]) + '">' + x[1] + '</button>').join('') + '</div>';
+  let h = '<div class="seg">' + [['opp', 'My opponents'], ['bot', 'Play a game'], ['scout', 'Scout'], ['open', 'Openings'], ['rep', 'Repertoire'], ['end', 'Endgames'], ['drill', 'Blunder check']].map(x => '<button data-act="trSub" data-v="' + x[0] + '" aria-pressed="' + (t.sub === x[0]) + '">' + x[1] + '</button>').join('') + '</div>';
+  if (t.sub === 'bot') return h + botHTML();
+  if (t.sub === 'drill') return h + drillIntroHTML();
   if (t.sub === 'scout') return h + scoutHTML();
   if (t.sub === 'rep') return h + repHTML();
   if (t.sub === 'end') return h + endHTML();
@@ -773,11 +853,156 @@ function searchHTML() {
   return hits.length ? '<div class="olist">' + hits.map(o => openRow(o[0], o[0], '<span class="muted">' + Math.ceil(o[1].split(' ').length / 2) + ' moves</span>')).join('') + '</div>' : '<p class="muted">No opening with that name.</p>';
 }
 
+/* ---------- a full game against the engine ---------- */
+
+let sparElo = null;
+function weakEngine(elo) { // Stockfish held back to about this rating
+  if (!sparE) sparE = Engine.worker(ENGINE);
+  if (sparElo !== elo) {
+    sparElo = elo;
+    if (elo >= 1320) { sparE.option('UCI_LimitStrength', 'true'); sparE.option('UCI_Elo', Math.min(3190, elo)); }
+    else { sparE.option('UCI_LimitStrength', 'false'); sparE.option('Skill Level', 0); }
+  }
+  return sparE;
+}
+const botElo = () => Math.max(400, Math.min(3000, Math.round((myElo() + (S.tr.bot ? +S.tr.bot.lvl : 0)) / 50) * 50));
+function botHTML() {
+  const b = S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }), me = myElo(), opt = (v, cur, label) => '<option value="' + v + '"' + (String(cur) === String(v) ? ' selected' : '') + '>' + label + '</option>';
+  const past = S.games.filter(g => g.bot).slice(0, 8);
+  return '<div class="card"><p>A normal game from move one against Stockfish, held back to about your level. No hints and no take-backs. When it ends, the game is reviewed like any other and its mistakes become puzzles.</p>' +
+    '<div class="row"><label>I play<select id="botSide">' + opt('r', b.side, 'Random') + opt('w', b.side, 'White') + opt('b', b.side, 'Black') + '</select></label>' +
+    '<label>Opponent<select id="botLvl">' + [[-200, 'Easier'], [0, 'My level'], [200, 'Harder'], [400, 'Much harder']].map(x => opt(x[0], b.lvl, x[1] + ' (' + Math.max(400, Math.round((me + x[0]) / 50) * 50) + ')')).join('') + '</select></label></div>' +
+    '<div class="row"><button class="btn" data-act="botStart">Start the game</button></div></div>' +
+    (past.length ? '<h3>Your games against it</h3><div class="games">' + past.map(g => { const rv = S.reviews[g.id]; return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span><span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent) + '</b><span class="muted">' + esc([g.opening || 'Unknown opening', when(g.end)].join(' · ')) + '</span></span><span class="gacc">' + (rv ? rv.acc[g.color] + '%' : '<span class="muted">Review</span>') + '</span></button>'; }).join('') + '</div>' : '');
+}
+function finishBot(z, won, lost) {
+  if (z.sans.length < 4 || z.botMeta) return; // nothing worth keeping
+  const elo = z.opt.bot.elo, me = S.settings.user.trim() || 'You', bot = 'Stockfish ' + elo, white = z.color === 'w';
+  const res = won ? (white ? '1-0' : '0-1') : lost ? (white ? '0-1' : '1-0') : '1/2-1/2', mine = myElo();
+  const pgn = '[Event "Blunder Lab game"]\n[White "' + (white ? me : bot) + '"]\n[Black "' + (white ? bot : me) + '"]\n[Result "' + res + '"]\n[WhiteElo "' + (white ? mine : elo) + '"]\n[BlackElo "' + (white ? elo : mine) + '"]\n\n' + T.movesText(z.sans) + ' ' + res + '\n';
+  const meta = z.botMeta = { id: 'b' + Date.now().toString(36), pasted: true, bot: true, url: '', pgn, white: white ? me : bot, black: white ? bot : me, wr: white ? mine : elo, br: white ? elo : mine, color: z.color,
+    result: won ? 'win' : lost ? 'loss' : 'draw', how: '', opponent: bot, timeClass: 'bot', end: Date.now(), opening: z.opening || '' };
+  S.games.unshift(meta); store.set({ games: S.games }); touchSync();
+  if (z.sans.length >= 10 && !S.busy) reviewMany([meta], true);
+}
+
+/* ---------- blunder check: is this move safe? ---------- */
+
+function drillItems() {
+  const mix = a => a.map(x => [Math.random(), x]).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+  const bad = [], safe = [];
+  for (const g of mix(S.games.filter(x => S.reviews[x.id] && S.reviews[x.id].colors)).slice(0, 14)) {
+    let game;
+    try { game = R.readGame(g.pgn); } catch (e) { continue; }
+    const rv = S.reviews[g.id];
+    game.plies.forEach((p, i) => {
+      const r = rv.recs[i];
+      if (!r || p.color !== g.color || i < 10 || r.cls === 'book' || r.cls === 'forced') return;
+      const nx = rv.evals[i + 1], reply = nx && nx.lines[0] && nx.lines[0].pv && nx.lines[0].pv[0];
+      const it = { p, r, reply, opp: g.opponent, end: g.end };
+      if ((r.cls === 'blunder' || r.cls === 'mistake') && r.loss >= 0.15 && reply) { it.bad = true; bad.push(it); }
+      else if (['best', 'excellent', 'great', 'good'].includes(r.cls) && r.loss < 0.03) { it.bad = false; safe.push(it); }
+    });
+  }
+  const b = mix(bad).slice(0, 5), caps = mix(safe.filter(x => x.p.captured)).slice(0, 2), s = caps.concat(mix(safe.filter(x => !x.p.captured))).slice(0, Math.max(b.length, 3));
+  return mix(b.concat(s));
+}
+function drillShow(z) {
+  const it = z.items[z.i];
+  z.c = new Chess(it.p.before); z.color = it.p.color; S.flipped = it.p.color === 'b';
+  z.arrow = { from: it.p.from, to: it.p.to }; z.tried = null; z.last = null; z.state = 'ask'; z.busy = true;
+  render();
+}
+function startDrill() {
+  const items = drillItems();
+  if (items.length < 4) { S.drillMsg = 'There are not enough reviewed games yet. Review a few more and come back.'; renderPanel(); return; }
+  const z = newSession('drill', items[0].p.color);
+  z.items = items; z.i = 0; z.right = 0; z.run = 0; z.bestRun = 0;
+  drillShow(z);
+}
+function drillAnswer(saysBad) {
+  const z = S.train, it = z.items[z.i];
+  if (!z || z.state !== 'ask') return;
+  z.ok = saysBad === it.bad; z.state = 'shown';
+  if (z.ok) { z.right++; z.run++; z.bestRun = Math.max(z.bestRun, z.run); } else z.run = 0;
+  try { z.c.move({ from: it.p.from, to: it.p.to, promotion: it.p.promotion || undefined }); z.last = [it.p.from, it.p.to]; } catch (e) { /* keep the position as it was */ }
+  z.arrow = null; z.tried = it.bad ? it.reply : null; // the red arrow is the reply that punishes it
+  render();
+}
+function drillNext() {
+  const z = S.train;
+  if (++z.i >= z.items.length) { z.done = true; z.tried = null; const d = S.settings.drill || (S.settings.drill = { n: 0, right: 0, best: 0 }); d.n += z.items.length; d.right += z.right; d.best = Math.max(d.best, z.bestRun); saveSettings(); render(); }
+  else drillShow(z);
+}
+function drillIntroHTML() {
+  const d = S.settings.drill;
+  return '<div class="card"><p>Quick-fire positions from your own games. You see a move you actually played and say whether it was <b>safe</b> or a <b>mistake</b>. It trains the one habit that wins the most games at your level: checking a move before you play it.</p>' +
+    (S.drillMsg ? '<p><b>' + esc(S.drillMsg) + '</b></p>' : '') + '<div class="row"><button class="btn" data-act="drStart">Start</button></div>' +
+    (d && d.n ? '<p class="muted">So far: ' + d.right + ' of ' + d.n + ' right (' + Math.round(100 * d.right / d.n) + '%). Best run: ' + d.best + ' in a row.</p>' : '') + '</div>';
+}
+function drillHTML() {
+  const z = S.train, it = z.items[Math.min(z.i, z.items.length - 1)], side = it.p.color === 'w' ? 'White' : 'Black';
+  if (z.done) return '<div class="card pz"><div class="lbl">Blunder check</div><h3>' + z.right + ' of ' + z.items.length + ' right</h3><p>Best run: ' + z.bestRun + ' in a row.</p><div class="row"><button class="btn" data-act="drStart">Go again</button><button class="btn ghost" data-act="trStop">Back</button></div></div>';
+  let h = '<div class="card pz ' + (z.state === 'ask' ? '' : z.ok ? 'right' : 'wrong') + '"><div class="lbl">Blunder check · ' + (z.i + 1) + ' of ' + z.items.length + ' · ' + z.right + ' right' + (z.run > 1 ? ' · ' + z.run + ' in a row' : '') + '</div>';
+  if (z.state === 'ask') h += '<h3>Is ' + esc(it.p.san) + ' safe?</h3><p>You are ' + side + ' (against ' + esc(it.opp || '?') + ', ' + esc(when(it.end)) + '). The arrow shows the move. Look at what your opponent can do after it.</p>' +
+    '<div class="row"><button class="btn" data-act="drSafe">Safe</button><button class="btn ghost" data-act="drBad">Mistake</button></div>';
+  else {
+    const bs = it.r.best ? (R.lineToSan(it.p.before, [it.r.best])[0] || {}).san : '', rs = it.bad && it.reply ? (R.lineToSan(it.p.after, [it.reply])[0] || {}).san : '';
+    h += '<h3>' + (z.ok ? 'Right' : 'Not quite') + ': ' + esc(it.p.san) + (it.bad ? ' was a ' + it.r.cls : ' was fine') + '</h3><p>' + esc(R.explain(it.r, it.p, bs)) + (rs ? ' The red arrow is the reply, ' + esc(rs) + '.' : '') + '</p>' +
+      '<div class="row"><button class="btn" data-act="drNext">' + (z.i + 1 >= z.items.length ? 'See the result' : 'Next') + '</button></div>';
+  }
+  return h + '</div><div class="row"><button class="link" data-act="trStop">Stop</button></div>';
+}
+
+/* ---------- head to head, and "explain this move" ---------- */
+
+function h2hHTML(meta) {
+  if (meta.bot || meta.pasted) return '';
+  const H = T.headToHead(S.hist, meta.opponent, meta.id);
+  if (!H.n) return '';
+  return '<details class="card sum h2h"><summary>You have played ' + esc(meta.opponent) + ' ' + H.n + ' time' + (H.n === 1 ? '' : 's') + ' before <span class="muted">' + H.w + 'W ' + H.d + 'D ' + H.l + 'L</span></summary>' +
+    H.games.slice(0, 6).map(x => '<div class="orow"><span><span class="dot ' + x.c + '"></span>' + esc(when(x.end)) + ' · ' + esc(x.op || T.movesText(x.mv.split(' ').slice(0, 4))) + '</span><span></span><span class="' + (x.res === 'win' ? 'up' : x.res === 'loss' ? 'down' : 'muted') + '">' + (x.res === 'win' ? 'Won' : x.res === 'loss' ? 'Lost' : 'Drew') + '</span></div>').join('') + '</details>';
+}
+function whyHTML() {
+  const { meta, game, rv } = S.cur;
+  if (S.explain !== meta.id + ':' + S.ply) return '';
+  let out = [];
+  try { out = T.explainWhy(game.plies[S.ply - 1], rv.recs[S.ply - 1], rv.evals[S.ply - 1], rv.evals[S.ply]); } catch (e) { /* nothing to add */ }
+  return out.length ? '<div class="why">' + out.map(s => '<p>' + esc(s) + '</p>').join('') + '</div>' : '';
+}
+
+/* ---------- goals, streaks and the opening report card ---------- */
+
+function goalsHTML() {
+  const g = S.goals, now = Date.now(), tc = S.eloTc, ser = tc ? T.ratingSeries(S.hist, tc) : [], cur = ser.length ? ser[ser.length - 1].r : 0;
+  const today = (S.act[T.dayKey(now)] || {}).pz || 0, wk = Object.values(S.reviews).filter(r => (r.at || 0) > now - 7 * 864e5).length, run = T.streak(S.act, 'pz', g.pz || 1, now);
+  const row = (label, id, val, ph, pct, note) => '<div class="goal"><label>' + label + '<input id="' + id + '" inputmode="numeric" value="' + esc(val || '') + '" placeholder="' + ph + '"></label>' +
+    '<div><span class="track"><i style="width:' + Math.round(100 * Math.max(0, Math.min(1, pct))) + '%"></i></span><span class="muted">' + note + '</span></div></div>';
+  let rn = cur ? 'You are at ' + cur + ' (' + tc + '). Set a target.' : 'Set a target once your games are loaded.', rp = 0;
+  if (g.rating && cur) {
+    const from = Math.min(g.from || cur, cur), P = T.project(ser, 30);
+    rp = cur >= g.rating ? 1 : g.rating > from ? (cur - from) / (g.rating - from) : 0;
+    rn = cur >= g.rating ? cur + ' · goal reached. Set the next one.' : cur + ' now · ' + (g.rating - cur) + ' to go' + (P ? (P.proj >= g.rating ? ' · on current form you get there within about 30 games' : ' · current form points to ' + P.proj + ' in 30 games') : '');
+  }
+  return '<h3>Goals</h3><div class="card">' +
+    row('Rating goal' + (tc ? ' (' + tc + ')' : ''), 'goalRating', g.rating, 'e.g. ' + (cur ? Math.ceil((cur + 50) / 50) * 50 : 1000), rp, rn) +
+    row('Puzzles a day', 'goalPz', g.pz, 'e.g. 10', g.pz ? today / g.pz : 0, today + ' done today' + (g.pz ? ' of ' + g.pz : '') + ' · ' + (run ? run + '-day streak' : 'no streak yet')) +
+    row('Reviews a week', 'goalRv', g.rv, 'e.g. 7', g.rv ? wk / g.rv : 0, wk + ' in the last 7 days' + (g.rv ? ' of ' + g.rv : '')) + '</div>';
+}
+function openReportHTML() {
+  const rows = T.openingReport(S.games, S.reviews);
+  if (!rows.length) return '';
+  return '<h3>Opening report card</h3><div class="card"><table class="rep"><tr><th>Opening</th><th>Games</th><th>In theory</th><th>First 12</th><th>Grade</th></tr>' +
+    rows.map(o => '<tr><td><span class="dot ' + o.c + '"></span>' + esc(o.name) + (o.slip ? '<span class="muted slip">Usually slips on move ' + (Math.floor(o.slip.ply / 2) + 1) + ' with ' + esc(o.slip.san) + (o.slip.n > 1 ? ' (' + o.slip.n + ' games)' : '') + '</span>' : '') + '</td><td>' + o.n + '</td><td>' + o.book.toFixed(1) + ' moves</td><td>' + (o.acc == null ? '–' : o.acc.toFixed(0) + '%') + '</td><td><b class="grade g' + o.grade + '">' + o.grade + '</b></td></tr>').join('') +
+    '</table><p class="muted">“In theory” is how many moves the game stayed in known opening lines. “First 12” is your accuracy over your first twelve moves outside the book. Reviewed games only.</p></div>';
+}
+
 /* ---------- sync between devices (a private GitHub gist) ---------- */
 
 let gist = null, syncTimer = null, remoteCache = null;
 function touchSync() { if (!S.sync.token) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 8000); }
-const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: S.puzzles, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
+const madeOnly = () => { const o = {}; for (const k in S.puzzles) if (S.puzzles[k].made) o[k] = S.puzzles[k]; return o; }; // made-up puzzles stay on the device that made them
+const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
 const betterRv = (x, y) => (x.depth || 0) > (y.depth || 0) || ((x.depth || 0) === (y.depth || 0) && (x.at || 0) > (y.at || 0));
 async function syncNow() {
   if (!S.sync.token || S.sync.busy) return;
@@ -789,10 +1014,10 @@ async function syncNow() {
     // puzzle progress, repertoire and the rest: merge item by item, then store whichever side was behind
     const mine = localState(), merged = Y.mergeState(mine, remote['state.json']);
     if (!Y.same(merged, Y.mergeState(mine, null))) {
-      S.puzzles = merged.puzzles; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._cal = null;
+      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._cal = null;
       if (merged.user.v && (merged.user.t > (S.settings.userT || 0) || !S.settings.user.trim())) { S.settings.user = merged.user.v; S.settings.userT = merged.user.t; sets.settings = S.settings; }
       for (const g of merged.pasted) if (!S.games.some(x => x.id === g.id)) S.games.push(g);
-      Object.assign(sets, { puzzles: S.puzzles, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
+      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
     }
     if (!Y.same(merged, Y.mergeState(remote['state.json'], null))) out['state.json'] = merged;
     // reviews: take the ones this device lacks, send the ones the others lack
@@ -816,10 +1041,13 @@ async function syncNow() {
     const rh = remote['hist.json'] || {}, lower = S.settings.user.trim().toLowerCase();
     if (rh.user === lower && Array.isArray(rh.list)) {
       if (S.histUser !== lower) { S.hist = []; S.histMonths = []; S.histUser = lower; }
-      const have = new Set(S.hist.map(x => x.id)), add = rh.list.filter(x => !have.has(x.id));
-      if (add.length) { S.hist = S.hist.concat(add).sort((a, b) => a.end - b.end); sets.hist = S.hist; sets.histUser = lower; }
+      const have = new Map(S.hist.map((x, i) => [x.id, i])), add = rh.list.filter(x => !have.has(x.id));
+      let fixed = 0;
+      for (const x of rh.list) if (have.has(x.id) && x.opp !== undefined && S.hist[have.get(x.id)].opp === undefined) { S.hist[have.get(x.id)] = x; fixed++; }
+      if (add.length || fixed) { S.hist = S.hist.concat(add).sort((a, b) => a.end - b.end); sets.hist = S.hist; sets.histUser = lower; }
     }
-    if (S.histUser === lower && S.hist.length && (rh.user !== lower || S.hist.length > (rh.list || []).length)) out['hist.json'] = { user: lower, list: S.hist };
+    const full = h => h.every(x => x.opp !== undefined);
+    if (S.histUser === lower && S.hist.length && (rh.user !== lower || S.hist.length > (rh.list || []).length || (rh.v !== 2 && full(S.hist)))) out['hist.json'] = { user: lower, v: full(S.hist) ? 2 : 1, list: S.hist };
     if (got || sets.puzzles) { S.games.sort((a, b) => b.end - a.end); sets.games = S.games; }
     if (Object.keys(sets).length) await store.set(sets);
     if (Object.keys(out).length) { await gist.write(S.sync.gist, out); Object.assign(remoteCache, out); }
@@ -872,16 +1100,16 @@ function clockStatsHTML() {
 
 /* ---------- puzzle themes ---------- */
 
-function themeChips(all) {
+function themeChips() {
   const cnt = {};
-  all.forEach(p => { const t = themeOf(p); cnt[t] = (cnt[t] || 0) + 1; });
-  const keys = Object.keys(R.THEMES).filter(k => cnt[k]);
-  if (keys.length < 2) return '';
-  return '<div class="seg chips"><button data-act="pzTheme" data-v="" aria-pressed="' + !S.pzTheme + '">All <span class="muted">' + all.length + '</span></button>' +
-    keys.map(k => '<button data-act="pzTheme" data-v="' + k + '" aria-pressed="' + (S.pzTheme === k) + '">' + R.THEMES[k] + ' <span class="muted">' + cnt[k] + '</span></button>').join('') + '</div>';
+  let tot = 0;
+  Object.values(S.puzzles).forEach(p => { if (R.mastered(p) || p.made) return; const t = themeOf(p); cnt[t] = (cnt[t] || 0) + 1; tot++; });
+  const lab = n => (n ? '<span class="muted">' + n + '</span>' : '<span class="tick">✓</span>');
+  return '<div class="seg chips"><button data-act="pzTheme" data-v="" aria-pressed="' + !S.pzTheme + '">All ' + lab(tot) + '</button>' +
+    Object.keys(R.THEMES).map(k => '<button data-act="pzTheme" data-v="' + k + '" aria-pressed="' + (S.pzTheme === k) + '">' + R.THEMES[k] + ' ' + lab(cnt[k] || 0) + '</button>').join('') + '</div>';
 }
 function themesHTML() {
-  const all = Object.values(S.puzzles);
+  const all = ownPuzzles();
   if (all.length < 5) return '';
   const by = {};
   all.forEach(p => { const o = by[themeOf(p)] || (by[themeOf(p)] = { n: 0, seen: 0, right: 0 }); o.n++; o.seen += p.seen || 0; o.right += p.right || 0; });
@@ -904,7 +1132,7 @@ function weekStats(from, to) {
   o.acc = avg(rg.map(g => S.reviews[g.id].acc[g.color]).filter(x => x != null));
   o.gr = avg(rg.map(g => gameRating(g, S.reviews[g.id], g.color)).filter(Boolean).map(g => g.rating));
   o.bad = avg(rg.map(g => S.reviews[g.id].recs.filter((r, i) => S.reviews[g.id].colors[i] === g.color && ['mistake', 'miss', 'blunder'].includes(r.cls)).length));
-  const th = {}; Object.values(S.puzzles).forEach(p => { if (p.date >= from && p.date < to) th[themeOf(p)] = (th[themeOf(p)] || 0) + 1; });
+  const th = {}; ownPuzzles().forEach(p => { if (p.date >= from && p.date < to) th[themeOf(p)] = (th[themeOf(p)] || 0) + 1; });
   delete th.other;
   o.theme = Object.keys(th).sort((a, b) => th[b] - th[a])[0] || ''; o.themeN = th[o.theme] || 0;
   return o;
@@ -1039,9 +1267,9 @@ function startPuzzle(p) {
 function answerText(p) { const l = R.lineToSan(p.fen, p.pv, 6); return l.length ? 'Best is ' + l[0].san + (l.length > 1 ? ', and play might go ' + l.slice(1, 5).map(m => m.san).join(' ') : '') + '.' : ''; }
 async function puzzleDone(correct, note) {
   const z = S.puzzle;
-  if (z.first || !correct) { if (z.first) { S.puzzles[z.p.id] = R.gradePuzzle(S.puzzles[z.p.id] || z.p, correct && z.first, Date.now()); await savePuzzles(); } }
+  z.clean = correct && z.first;
+  if (z.first) { z.first = false; await gradeNow(z.p, correct); }
   z.state = correct ? 'right' : 'shown'; z.note = note;
-  if (!correct) z.first = false;
   render();
 }
 async function tryPuzzle(from, to) {
@@ -1060,7 +1288,7 @@ async function tryPuzzle(from, to) {
   if (S.puzzle !== z) return;
   const mine = res.lines[0] ? 1 - R.expPts(res.lines[0]) : 0;
   if ((p.e != null ? p.e : 1) - mine < 0.04) return puzzleDone(true, m.san + ' is also strong. ' + answerText(p));
-  if (z.first) { S.puzzles[p.id] = R.gradePuzzle(S.puzzles[p.id] || p, false, Date.now()); await savePuzzles(); z.first = false; }
+  if (z.first) { z.first = false; await gradeNow(p, false); }
   z.state = 'wrong'; z.tried = uci; z.fen = p.fen; z.last = null;
   z.note = (uci === (R.lineToSan(p.fen, [uci])[0] || {}).uci && m.san === p.played ? m.san + ' is what you played in the game.' : m.san + ' gives up about ' + Math.max(1, Math.round(((p.e != null ? p.e : 1) - mine) * 100)) + '% of your winning chances.');
   render();
@@ -1072,6 +1300,7 @@ document.addEventListener('click', async e => {
   if (tab) {
     S.tab = tab.dataset.tab;
     let reset = false;
+    if (S.tab !== 'puzzles') stopMaking();
     if (S.tab !== 'puzzles' && S.puzzle) { S.puzzle = null; reset = true; }
     if (S.tab !== 'trainer' && S.train) { S.train = null; reset = true; }
     if (reset) { S.line = null; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render(); } else renderPanel();
@@ -1111,15 +1340,11 @@ document.addEventListener('click', async e => {
     const ev = rv.evals[best ? S.ply - 1 : S.ply], base = best ? p.before : p.after;
     enterLine(base, ev.lines[0].pv, best ? 'Best line instead of ' + p.san : 'After ' + p.san, 1);
   }
-  else if (act === 'pzStart' || act === 'pzAny' || act === 'pzNext') {
-    const due = duePuzzles(), pool = due.length ? due : pzPool().sort((a, b) => (a.due || 0) - (b.due || 0));
-    const next = pool.find(p => !S.puzzle || p.id !== S.puzzle.p.id) || pool[0];
-    if (next && (due.length || act !== 'pzNext')) startPuzzle(next); else { S.puzzle = null; S.line = null; render(); }
-  }
+  else if (act === 'pzStart' || act === 'pzNext') nextPuzzle();
   else if (act === 'pzShow') puzzleDone(false, answerText(S.puzzle.p));
   else if (act === 'pzLine') enterLine(S.puzzle.p.fen, S.puzzle.p.pv, 'The answer', 1);
-  else if (act === 'pzQuit') { S.puzzle = null; S.line = null; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render(); }
-  else if (act === 'pzTheme') { S.pzTheme = a.dataset.v; renderPanel(); }
+  else if (act === 'pzQuit') { stopMaking(); S.puzzle = null; S.line = null; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render(); }
+  else if (act === 'pzTheme') { stopMaking(); S.pzMsg = ''; S.pzTheme = a.dataset.v; renderPanel(); }
   else if (act === 'syncOn') { const t = ($('#syncTok').value || '').trim(); if (!t) return; S.sync.token = t; S.sync.gist = ''; await store.set({ syncToken: t, syncGist: '' }); paintSync(); syncNow(); }
   else if (act === 'syncGo') syncNow();
   else if (act === 'syncOff') { S.sync.token = ''; S.sync.gist = ''; S.sync.last = 0; S.sync.error = ''; gist = null; await store.set({ syncToken: '', syncGist: '' }); paintSync(); }
@@ -1131,6 +1356,13 @@ document.addEventListener('click', async e => {
   else if (act === 'repDrill') { const r = S.rep.list[+a.dataset.i]; if (r) { S.tr.course = { name: r.name, line: r.line, side: r.side, idea: ideaFor(r.name) }; startCourse('test'); } }
   else if (act === 'repGame') { const m = S.games.find(g => g.id === a.dataset.id); if (m) openGame(m, +a.dataset.ply); }
   else if (act === 'endPlay') { const e = endCache.get(a.dataset.id); if (e) startSpar(e.color, [], { fen: e.fen, end: e, strong: true }); }
+  else if (act === 'explain') { S.explain = S.cur.meta.id + ':' + S.ply; renderPanel(); }
+  else if (act === 'botStart') { const b = S.tr.bot || { side: 'r' }; startSpar(b.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : b.side, [], { bot: { elo: botElo() } }); }
+  else if (act === 'botResign') { const z = S.train; if (z && !z.done && !z.busy) { z.resigned = true; endTrain(z); } }
+  else if (act === 'botReview') { const m = S.train && S.train.botMeta; if (m) openGame(m); }
+  else if (act === 'drStart') { S.drillMsg = ''; startDrill(); }
+  else if (act === 'drSafe' || act === 'drBad') drillAnswer(act === 'drBad');
+  else if (act === 'drNext') drillNext();
   else if (act === 'eloTc') { S.eloTc = a.dataset.v; renderPanel(); }
   else if (act === 'eloAll') { S.eloAll = !S.eloAll; renderPanel(); }
   else if (act === 'trSub') { S.tr.sub = a.dataset.v; renderPanel(); }
@@ -1152,13 +1384,20 @@ document.addEventListener('change', e => {
   else if (t.dataset && t.dataset.cal && S.cur) { const id = S.cur.meta.id, v = Math.round(+t.value) || 0, o = S.calib[id] || {}; if (v >= 100 && v <= 3500) o[t.dataset.cal] = v; else delete o[t.dataset.cal]; o.t = Date.now(); S.calib[id] = o; S._cal = null; store.set({ calib: S.calib }); touchSync(); render(); }
   else if (t.id === 'depth') { S.settings.depth = t.value; saveSettings(); }
   else if (t.id === 'autoOn') { S.settings.auto = t.checked; saveSettings(); }
+  else if (t.id === 'botSide' || t.id === 'botLvl') { (S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }))[t.id === 'botSide' ? 'side' : 'lvl'] = t.value; }
+  else if (t.id === 'goalRating' || t.id === 'goalPz' || t.id === 'goalRv') {
+    const v = Math.max(0, Math.round(+t.value) || 0), k = t.id === 'goalRating' ? 'rating' : t.id === 'goalPz' ? 'pz' : 'rv';
+    if (v) S.goals[k] = v; else delete S.goals[k];
+    if (k === 'rating') { const ser = T.ratingSeries(S.hist, S.eloTc); S.goals.from = ser.length ? ser[ser.length - 1].r : 0; }
+    S.goals.t = Date.now(); store.set({ goals: S.goals }); touchSync(); renderPanel();
+  }
   else if (t.id === 'trColor') { S.tr.color = t.value; renderPanel(); }
   else if (t.id === 'trTc') { S.tr.tc = t.value; renderPanel(); }
   if (t.tagName === 'SELECT' || t.type === 'checkbox') t.blur(); // so the arrow keys go back to stepping through moves
 });
 document.addEventListener('input', e => { if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && e.target.dataset && e.target.dataset.cal) e.target.blur(); });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }
 document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('sum')) S.sumOpen = e.target.open; }, true);
 document.addEventListener('keydown', e => {
@@ -1184,13 +1423,16 @@ document.addEventListener('keydown', e => {
     if (Math.abs(dx) > 45 && Math.abs(dy) < 40 && !board.view.movable) nav(dx < 0 ? 'next' : 'prev');
   }, { passive: true });
   document.documentElement.classList.toggle('web', !isExt);
+  if (!isExt && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* works without it, just not offline */ }); // keeps the app usable with no connection
   await loadAll();
   const want = /#game=(\d+)/.exec(location.hash);
   render();
   // every start: pick up whatever was played since last time, on any device
   let fresh = [];
   S.busy = { text: S.hist.length ? 'Checking chess.com for new games' : 'Loading your games from chess.com (two years of history, first time only)', done: 0, total: 1 }; renderStatus();
-  try { fresh = await syncGames('full'); } catch (err) { if (!S.games.length || want) S.error = err.message; }
+  const offline = !isExt && navigator.onLine === false;
+  if (offline) S.error = 'You are offline. Puzzles, the trainer and saved reviews still work.';
+  else try { fresh = await syncGames('full'); } catch (err) { if (!S.games.length || want) S.error = err.message; }
   S.busy = null; render();
   fresh = fresh.filter(g => !S.reviews[g.id]);
   if (fresh.length && S.settings.auto !== false && !want) reviewMany(fresh, true);
