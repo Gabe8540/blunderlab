@@ -572,7 +572,7 @@ function puzzlesHTML() {
     '<h3>Find a better move</h3><p>Here you played <b>' + esc(p.played) + '</b>, ' + (/^[aeiou]/.test(p.cls) ? 'an ' : 'a ') + p.cls + '. What should you have played?</p>') + '<div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
   else if (z.state === 'wrong') h += '<h3>Not that one</h3><p>' + esc(z.note || '') + ' Try again, or see the answer.</p><div class="row"><button class="btn ghost" data-act="pzShow">Show the answer</button></div>';
   else h += '<h3>' + (z.state === 'right' ? (z.clean ? 'Correct' : 'Got it') : 'The answer') + '</h3><p>' + esc(z.note || '') + '</p><p class="muted">Theme: ' + R.THEMES[themeOf(p)] + ' · ' + (z.daily ? (z.clean ? 'Right first time.' : 'You can retry it from the daily card.') : z.clean ? 'Right first time, so this one is finished.' : 'It comes back until you get it first time.') + '</p>' +
-    '<div class="row"><button class="btn" data-act="pzNext">Next puzzle</button><button class="btn ghost" data-act="pzLine">Play through the line</button>' + (p.made ? '' : '<button class="btn ghost" data-act="pzGame">Open the game here</button>') + '</div>';
+    altsHTML(z) + '<div class="row"><button class="btn" data-act="pzNext">Next puzzle</button>' + (p.made ? '' : '<button class="btn ghost" data-act="pzGame">Open the game here</button>') + '</div>';
   return h + '</div><div class="row"><button class="link" data-act="pzQuit">Stop practising</button></div>';
 }
 
@@ -1404,8 +1404,34 @@ function startPuzzle(p) {
   render();
 }
 function answerText(p) { const l = R.lineToSan(p.fen, p.pv, 6); return l.length ? 'Best is ' + l[0].san + (l.length > 1 ? ', and play might go ' + l.slice(1, 5).map(m => m.san).join(' ') : '') + '.' : ''; }
+/* Once a puzzle is over, the engine's three best lines from the puzzle position (and your move's line, if it was a
+   different good move), each one playable move by move on the board. Its own engine, so nothing else cuts it short. */
+let altE = null;
+async function loadAlts(z) {
+  if (z.alts) return;
+  z.alts = 'wait';
+  if (!altE) altE = Engine.worker(ENGINE);
+  let lines = [];
+  try { lines = (await altE.analyse(z.p.fen, { depth: 16, multipv: 3, movetime: 4000 })).lines.filter(l => l.pv && l.pv.length); } catch (e) { /* show the stored answer below */ }
+  if (!lines.length && z.p.pv && z.p.pv.length) lines = [{ pv: z.p.pv }];
+  if (z.mine && !lines.some(l => l.pv[0] === z.mine.pv[0])) lines.push(z.mine);
+  z.alts = lines;
+  if (S.puzzle === z && S.tab === 'puzzles') renderPanel();
+}
+function altsHTML(z) {
+  if (!z.alts || z.alts === 'wait') return '<p class="muted">Working out the other lines from this position…</p>';
+  const fen = z.p.fen, parts = fen.split(' '), from = (+parts[5] - 1) * 2 + (parts[1] === 'b' ? 1 : 0), mine = z.mine ? z.mine.pv[0] : z.played;
+  return '<h3>Lines from this position</h3>' + z.alts.map((l, i) => {
+    const mv = R.lineToSan(fen, l.pv, 12);
+    if (!mv.length) return '';
+    const t = l.cp != null || l.mate != null ? R.scoreText(l, wtm(fen)) : '', tags = [i === 0 && t ? 'best' : '', l.pv[0] === mine ? 'your move' : ''].filter(Boolean).join(' · ');
+    return '<div class="lrow alt"><div class="lmain"><b>' + esc(mv[0].san) + (tags ? ' <span class="muted">' + tags + '</span>' : '') + (t ? ' <span class="ev ' + (/^-|^0-1/.test(t) ? 'neg' : 'pos') + '">' + t + '</span>' : '') + '</b>' +
+      '<span class="muted">' + esc(T.movesText(mv.map(m => m.san), from)) + '</span></div><button class="btn small ghost" data-act="pzAlt" data-i="' + i + '">Play it</button></div>';
+  }).join('') + '<p class="muted">“Play it” puts the line on the board: step through it with ← → or the buttons under the board.</p>';
+}
 async function puzzleDone(correct, note) {
   const z = S.puzzle;
+  loadAlts(z);
   z.clean = correct && z.first;
   if (z.first) { z.first = false; await gradeNow(z.p, correct); }
   z.state = correct ? 'right' : 'shown'; z.note = note;
@@ -1419,14 +1445,18 @@ async function tryPuzzle(from, to) {
   if (exact) uci = exact;
   let m;
   try { m = c.move({ from, to, promotion: uci.slice(4) || undefined }); } catch (e) { renderBoard(); return; }
-  if (p.answers.includes(uci)) { z.fen = m.after; z.last = [from, to]; return puzzleDone(true, m.san + ' is right. ' + answerText(p)); }
+  if (p.answers.includes(uci)) { z.fen = m.after; z.last = [from, to]; z.played = uci; return puzzleDone(true, m.san + ' is right. ' + answerText(p)); }
   // not the engine's first choice: check whether it is about as good before calling it wrong
   z.fen = m.after; z.last = [from, to]; renderBoard();
   const over = R.terminalScore(m.after);
   const res = over ? { lines: [over] } : await live.analyse(m.after, { depth: 12, multipv: 1, movetime: 2500 });
   if (S.puzzle !== z) return;
   const mine = res.lines[0] ? 1 - R.expPts(res.lines[0]) : 0;
-  if ((p.e != null ? p.e : 1) - mine < 0.04) return puzzleDone(true, m.san + ' is also strong. ' + answerText(p));
+  if ((p.e != null ? p.e : 1) - mine < 0.04) { // your own good move gets its line too, scored for you
+    const r0 = res.lines[0] || {}, sc = r0.mate != null ? { mate: r0.mate === 0 ? 0 : -r0.mate } : r0.cp != null ? { cp: -r0.cp } : {};
+    z.mine = Object.assign({ pv: [uci].concat(r0.pv || []) }, sc);
+    return puzzleDone(true, m.san + ' is also strong. ' + answerText(p));
+  }
   if (z.first) { z.first = false; await gradeNow(p, false); }
   z.state = 'wrong'; z.tried = uci; z.fen = p.fen; z.last = null;
   z.note = (uci === (R.lineToSan(p.fen, [uci])[0] || {}).uci && m.san === p.played ? m.san + ' is what you played in the game.' : m.san + ' gives up about ' + Math.max(1, Math.round(((p.e != null ? p.e : 1) - mine) * 100)) + '% of your winning chances.');
@@ -1485,6 +1515,7 @@ document.addEventListener('click', async e => {
   else if (act === 'dailyRetry') { stopMaking(); dailyNext('', true); }
   else if (act === 'pzShow') puzzleDone(false, answerText(S.puzzle.p));
   else if (act === 'pzLine') enterLine(S.puzzle.p.fen, S.puzzle.p.pv, 'The answer', 1);
+  else if (act === 'pzAlt' && S.puzzle && Array.isArray(S.puzzle.alts)) { const z = S.puzzle, l = z.alts[+a.dataset.i], fen = z.p.fen; if (l) { const first = (R.lineToSan(fen, [l.pv[0]])[0] || {}).san || ''; enterLine(fen, l.pv, (l.pv[0] === (z.mine ? z.mine.pv[0] : z.played) ? 'Your move, ' : 'Line ' + (+a.dataset.i + 1) + ', ') + first + (l.cp != null || l.mate != null ? ' (' + R.scoreText(l, wtm(fen)) + ')' : ''), 1); renderPanel(); } }
   else if (act === 'pzQuit') { stopMaking(); S.puzzle = null; S.line = null; if (S.cur) S.flipped = S.cur.meta.color === 'b'; render(); }
   else if (act === 'pzTheme') { stopMaking(); S.pzMsg = ''; S.pzTheme = a.dataset.v; renderPanel(); }
   else if (act === 'syncOn') { const t = ($('#syncTok').value || '').trim(); if (!t) return; S.sync.token = t; S.sync.gist = ''; await store.set({ syncToken: t, syncGist: '' }); paintSync(); syncNow(); }
