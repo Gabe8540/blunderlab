@@ -181,7 +181,7 @@ function eloHTML() {
     (full.length > 150 ? '<button class="link" data-act="eloAll">' + (S.eloAll ? 'Show only the last 150 games' : 'Show all ' + full.length + ' games') + '</button>' : '');
   if (!P) return h + '<p>Play at least 8 rated ' + pick.tc + ' games and a projection appears here.</p></div>';
   h += '<p>In your last ' + P.games + ' rated ' + pick.tc + ' games you went ' + P.w + 'W ' + P.d + 'D ' + P.l + 'L against opponents averaging ' + P.avgOpp + '. That is how a player rated about <b>' + P.perf + '</b> scores. Keep playing like that and your rating should be near <b>' + P.proj + '</b> after ' + ahead + ' more games (likely between ' + P.projLo + ' and ' + P.projHi + ').</p>';
-  const acc = S.games.filter(g => g.timeClass === pick.tc && S.reviews[g.id] && S.reviews[g.id].acc[g.color] != null).sort((a, b) => a.end - b.end).map(g => S.reviews[g.id].acc[g.color]);
+  const acc = S.games.filter(g => g.timeClass === pick.tc && S.reviews[g.id] && S.reviews[g.id].acc[g.color] != null).sort((a, b) => a.end - b.end).map(g => accOf(g, S.reviews[g.id], g.color));
   if (acc.length >= 8) {
     const avg = a => a.reduce((s, v) => s + v, 0) / a.length, late = avg(acc.slice(-5)), early = avg(acc.slice(0, -5)), df = late - early;
     h += '<p class="muted">Move quality: ' + late.toFixed(1) + '% accuracy over your last 5 reviewed games, ' + (Math.abs(df) < 1.5 ? 'about the same as the ' + (acc.length - 5) + ' before.' : df > 0 ? 'up ' + df.toFixed(1) + ' points on the ' + (acc.length - 5) + ' before, which backs the projection.' : 'down ' + (-df).toFixed(1) + ' points on the ' + (acc.length - 5) + ' before, so the projection may be optimistic.') + '</p>';
@@ -210,8 +210,8 @@ async function review(meta, onStep) {
   const depth = DEPTHS[S.settings.depth] || 14;
   const evals = await analyseGame(bg, game, R, { depth, movetime: depth >= 18 ? 6000 : 3000 }, onStep, () => cancelBatch);
   if (!evals) return null;
-  const recs = R.classify(game, evals, S.book);
-  const rv = { depth, at: Date.now(), end: meta.end, evals, recs, acc: { w: R.accuracy(recs, game.plies, 'w'), b: R.accuracy(recs, game.plies, 'b') },
+  const k = ccFit().k, recs = R.classify(game, evals, S.book, k);
+  const rv = { depth, k, at: Date.now(), end: meta.end, evals, recs, acc: { w: R.accuracy(recs, game.plies, 'w'), b: R.accuracy(recs, game.plies, 'b') },
     colors: game.plies.map(p => p.color), clocks: game.plies.map(p => p.clock) };
   S.reviews[meta.id] = rv;
   await store.set({ ['rv:' + meta.id]: rv });
@@ -237,7 +237,7 @@ async function reviewMany(list, auto) {
     softPanel();
   }
   const done = list.filter(m => S.reviews[m.id]);
-  if (auto && done.length) S.notice = { id: done[0].id, text: done.length === 1 ? 'New game against ' + done[0].opponent + ' reviewed: ' + S.reviews[done[0].id].acc[done[0].color] + '% accuracy.' : done.length + ' new games reviewed.' };
+  if (auto && done.length) S.notice = { id: done[0].id, text: done.length === 1 ? 'New game against ' + done[0].opponent + ' reviewed: ' + accOf(done[0], S.reviews[done[0].id], done[0].color) + '% accuracy.' : done.length + ' new games reviewed.' };
   S.busy = null; renderStatus(); softPanel();
 }
 async function openGame(meta, ply) {
@@ -320,7 +320,7 @@ function renderWho() {
   const m = S.cur && !S.puzzle && !S.train ? S.cur.meta : null, rv = S.cur && S.cur.rv;
   const gr = c => { const g = rv && m ? gameRating(m, rv, c) : null; return g ? ' · played like ' + g.rating : ''; };
   const row = c => !m ? '' : '<span class="dot ' + c + '"></span><b>' + esc(c === 'w' ? m.white : m.black) + '</b> <span class="muted">' + esc((c === 'w' ? m.wr : m.br) || '') + '</span>' +
-    (rv ? '<span class="acc">' + rv.acc[c] + '% accuracy' + gr(c) + '</span>' : '');
+    (rv ? '<span class="acc">' + accOf(m, rv, c) + '% accuracy' + gr(c) + '</span>' : '');
   $('#top').innerHTML = row(S.flipped ? 'w' : 'b'); $('#bottom').innerHTML = row(S.flipped ? 'b' : 'w');
 }
 function renderLines() {
@@ -381,32 +381,107 @@ function gamesHTML() {
     return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span>' +
       '<span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent || '?') + ' <span class="muted">' + esc((g.color === 'w' ? g.br : g.wr) || '') + '</span></b>' +
       '<span class="muted">' + esc([g.opening || 'Unknown opening', g.timeClass, when(g.end)].filter(Boolean).join(' · ')) + '</span></span>' +
-      '<span class="gacc">' + (rv ? rv.acc[g.color] + '%' + (gameRating(g, rv, g.color) ? '<i>' + gameRating(g, rv, g.color).rating + '</i>' : '') : '<span class="muted">Review</span>') + '</span></button>';
+      '<span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' + (gameRating(g, rv, g.color) ? '<i>' + gameRating(g, rv, g.color).rating + '</i>' : '') : '<span class="muted">Review</span>') + '</span></button>';
   }).join('') + '</div>';
   return h + sync;
 }
 
 // The level each side played at in this game. Worked out from the stored review, so old reviews get it too.
 function rawGameRating(meta, rv, c) { return rv.colors ? R.gameRating(rv.recs, rv.colors, c, c === 'w' ? meta.wr : meta.br) : null; }
-// Calibration: every chess.com game rating you type in shifts all estimates toward chess.com's numbers.
-function calibOffset() {
-  if (S._cal != null) return S._cal;
-  const diffs = [];
-  for (const id in S.calib) { const g = S.games.find(x => x.id === id), rv = S.reviews[id]; if (!g || !rv) continue; for (const c of ['w', 'b']) { const est = S.calib[id][c] ? rawGameRating(g, rv, c) : null; if (est) diffs.push(S.calib[id][c] - est.rating); } }
-  return S._cal = diffs.length ? Math.round(diffs.reduce((a, b) => a + b, 0) / (diffs.length + 1) / 10) * 10 : 0;
+/* Matching chess.com. S.calib[id] holds what chess.com's Game Review said about a game, typed or pasted in:
+   { w, b: game ratings, aw, ab: accuracy, cw, cb: { class: count }, t }. From these, three things are learned:
+   a mapping for accuracy, one for game rating, and how wide the inaccuracy / mistake / blunder bands should be. */
+function ccFit() {
+  if (S._fit) return S._fit;
+  const accP = [], grP = [], cls = [];
+  for (const id in S.calib) {
+    const o = S.calib[id], g = S.games.find(x => x.id === id), rv = S.reviews[id];
+    if (!g || !rv) continue;
+    for (const c of ['w', 'b']) {
+      if (o['a' + c] && rv.acc[c] != null) accP.push([rv.acc[c], o['a' + c]]);
+      const raw = o[c] ? rawGameRating(g, rv, c) : null;
+      if (raw) grP.push([raw.rating, o[c]]);
+      if (o['c' + c] && rv.colors) cls.push({ recs: rv.recs, colors: rv.colors, c, want: o['c' + c] });
+    }
+  }
+  let k = 1;
+  if (cls.length >= 3) {
+    let best = Infinity, kb = 1;
+    for (let x = 0.6; x <= 1.801; x += 0.05) {
+      let e = 0;
+      for (const E of cls) { const ours = R.errCounts(E.recs, E.colors, E.c, x), w = E.want; e += Math.pow(ours.inaccuracy - (w.inaccuracy || 0), 2) + Math.pow(ours.mistake - (w.mistake || 0), 2) + Math.pow(ours.blunder - (w.blunder || 0) - (w.miss || 0), 2); }
+      if (e < best - 1e-9) { best = e; kb = x; }
+    }
+    k = Math.round((1 + (kb - 1) * cls.length / (cls.length + 3)) * 100) / 100; // held back toward the standard bands while there is little to go on
+  }
+  // how far off the estimates are, each pair judged by a fit learned without it
+  const check = P => { if (P.length < 2) return null; let was = 0, now = 0; P.forEach((p, i) => { const f = R.fitLine(P.filter((q, j) => j !== i)); was += Math.abs(p[1] - p[0]); now += Math.abs(p[1] - f(p[0])); }); return { was: was / P.length, now: now / P.length }; };
+  const err = { acc: check(accP), gr: check(grP) }, use = (P, e) => (e && e.now > e.was ? x => x : R.fitLine(P)); // a fit that does worse than none is not used
+  return S._fit = { acc: use(accP, err.acc), gr: use(grP, err.gr), k, n: { acc: accP.length, gr: grP.length, cls: cls.length }, err };
 }
-const calibCount = () => Object.values(S.calib).reduce((a, x) => a + (x.w ? 1 : 0) + (x.b ? 1 : 0), 0);
+const clampR = (v, lo, hi, step) => +Math.max(lo, Math.min(hi, Math.round(v / step) * step)).toFixed(step < 1 ? 1 : 0);
+function ownAcc(rv, c) { return rv.acc[c] == null ? null : clampR(ccFit().acc(rv.acc[c]), 0, 100, 0.1); }
+// The accuracy shown for a side: chess.com's own number when you entered it, otherwise ours, tuned toward theirs.
+function accOf(meta, rv, c) { const typed = (S.calib[meta.id] || {})['a' + c]; return typed || ownAcc(rv, c); }
+function ownRating(meta, rv, c) { const g = rawGameRating(meta, rv, c); if (g) g.rating = clampR(ccFit().gr(g.rating), 100, 3300, 10); return g; }
 function gameRating(meta, rv, c) {
-  const g = rawGameRating(meta, rv, c), typed = (S.calib[meta.id] || {})[c];
-  if (g) g.rating = typed || Math.max(100, Math.min(3300, g.rating + calibOffset())); // a number you typed in is shown as it is
+  const g = ownRating(meta, rv, c), typed = (S.calib[meta.id] || {})[c];
+  if (g && typed) g.rating = typed; // a number you entered is shown as it is
   return g;
+}
+// Re-rates every stored review with the bands learned from chess.com. A move that turns into a mistake becomes a puzzle.
+async function applyBands() {
+  const k = ccFit().k, sets = {};
+  let added = false;
+  for (const g of S.games) {
+    const rv = S.reviews[g.id];
+    if (!rv || (rv.k || 1) === k) continue;
+    R.reband(rv.recs, k); rv.k = k; sets['rv:' + g.id] = rv;
+    let game;
+    try { game = R.readGame(g.pgn); } catch (e) { continue; }
+    for (const p of R.makePuzzles(game, rv.recs, rv.evals, g.color, g)) if (!S.puzzles[p.id]) { p.e = R.expPts(rv.evals[p.ply].lines[0]); S.puzzles[p.id] = p; added = true; }
+  }
+  if (added) sets.puzzles = S.puzzles;
+  if (Object.keys(sets).length) { endCache.clear(); await store.set(sets); }
+  return Object.keys(sets).length > 0;
+}
+function saveCalib(id, o) {
+  if (o && Object.keys(o).some(k => k !== 't')) { o.t = Date.now(); S.calib[id] = o; } else delete S.calib[id];
+  S._fit = null; store.set({ calib: S.calib }); touchSync();
+  applyBands().then(() => render());
+}
+function ccHTML() {
+  const { meta, rv } = S.cur;
+  if (meta.bot || !rv.colors) return '';
+  const o = S.calib[meta.id] || {}, F = ccFit(), has = Object.keys(o).some(k => k !== 't');
+  const mine = c => { const n = { inaccuracy: 0, mistake: 0, miss: 0, blunder: 0 }; rv.recs.forEach((r, i) => { if (rv.colors[i] === c && r.cls in n) n[r.cls]++; }); return n; };
+  const cnt = { w: mine('w'), b: mine('b') }, cell = (key, v, ph) => '<td><input class="ccin" data-cc="' + key + '" inputmode="decimal" value="' + esc(v == null ? '' : v) + '" placeholder="' + ph + '"></td>';
+  const row = (label, ours, theirs) => '<tr><td>' + label + '</td><td>' + (ours.w == null ? '–' : ours.w) + '</td>' + theirs.w + '<td>' + (ours.b == null ? '–' : ours.b) + '</td>' + theirs.b + '</tr>';
+  const gw = ownRating(meta, rv, 'w'), gb = ownRating(meta, rv, 'b');
+  let h = '<details class="card sum cc"' + (S.ccOpen ? ' open' : '') + '><summary>Match chess.com <span class="muted">' + (has ? 'numbers entered for this game' : 'add chess.com’s review to sharpen every estimate') + '</span></summary>' +
+    '<p class="muted">Review this game on chess.com, copy its summary (accuracy, game rating and the move counts) and paste it here. Or type the numbers in. Every game you add tunes the estimates for all your games.</p>' +
+    '<textarea id="ccPaste" rows="3" placeholder="Paste chess.com’s Game Review summary"></textarea>' +
+    '<div class="row"><button class="btn small" data-act="ccRead">Read it</button>' + (has ? '<button class="btn small ghost" data-act="ccSwap">Swap White and Black</button><button class="link" data-act="ccClear">Clear</button>' : '') + '</div>' +
+    (S.ccMsg ? '<p><b>' + esc(S.ccMsg) + '</b></p>' : '') +
+    '<table class="cct"><tr><th></th><th colspan="2">' + esc(meta.white) + '</th><th colspan="2">' + esc(meta.black) + '</th></tr><tr><th></th><th>Ours</th><th>chess.com</th><th>Ours</th><th>chess.com</th></tr>' +
+    row('Accuracy', { w: ownAcc(rv, 'w'), b: ownAcc(rv, 'b') }, { w: cell('aw', o.aw, '%'), b: cell('ab', o.ab, '%') }) +
+    row('Game rating', { w: gw && gw.rating, b: gb && gb.rating }, { w: cell('w', o.w, ''), b: cell('b', o.b, '') }) +
+    [['inaccuracy', 'Inaccuracies'], ['mistake', 'Mistakes'], ['miss', 'Misses'], ['blunder', 'Blunders']].map(x => row(x[1], { w: cnt.w[x[0]], b: cnt.b[x[0]] }, { w: cell('cw.' + x[0], (o.cw || {})[x[0]], ''), b: cell('cb.' + x[0], (o.cb || {})[x[0]], '') })).join('') + '</table>';
+  const games = Object.keys(S.calib).filter(id => S.reviews[id]).length, e = F.err, bits = [];
+  const say = (e, name, f, unit) => (e.now > e.was ? name + ' is left as it was (the entries so far do not agree on a direction)' : name + ' is off by about ' + f(e.now) + unit + ' (it was ' + f(e.was) + ')');
+  if (e.acc) bits.push(say(e.acc, 'accuracy', v => v.toFixed(1), ' points'));
+  if (e.gr) bits.push(say(e.gr, 'game rating', v => Math.round(v), ''));
+  let sum = games ? 'Tuned on ' + games + ' game' + (games === 1 ? '' : 's') + '.' : 'Nothing entered yet.';
+  if (bits.length) sum += ' Checked against your entries, ' + bits.join(', and ') + '.';
+  sum += F.n.cls >= 3 ? (F.k === 1 ? ' Move ratings already match chess.com’s counts.' : ' Move ratings are now ' + (F.k > 1 ? 'more forgiving' : 'stricter') + ' (bands ×' + F.k.toFixed(2) + ') to match chess.com’s counts.') : ' Move ratings start tuning once 3 sides have move counts (' + F.n.cls + ' so far).';
+  return h + '<p class="muted">' + sum + '</p></details>';
 }
 function gameRatingHTML() {
   const { meta, rv } = S.cur, w = gameRating(meta, rv, 'w'), b = gameRating(meta, rv, 'b');
   if (!w && !b) return '';
   const tile = (c, g, name, elo) => '<div><span class="grname"><span class="dot ' + c + '"></span>' + esc(name) + '</span><b>' + (g ? g.rating : '–') + '</b>' +
     '<span>' + (g ? 'game rating' + (+elo > 0 ? ' · rated ' + esc(elo) + (g.rating !== +elo ? ' (' + (g.rating > +elo ? '+' : '−') + Math.abs(g.rating - +elo) + ')' : '') : '') : 'too few moves to tell') + '</span>' +
-    (g ? '<input class="cal" data-cal="' + c + '" inputmode="numeric" placeholder="chess.com’s number" title="Type the game rating chess.com shows for this player and the estimates tune themselves to match" value="' + esc((S.calib[meta.id] || {})[c] || '') + '">' : '') + '</div>';
+    '</div>';
   return '<div class="grate" title="An estimate of the level each side played at in this game: the quality of the moves, pulled halfway toward the player’s real rating.">' + tile('w', w, meta.white, meta.wr) + tile('b', b, meta.black, meta.br) + '</div>';
 }
 function graphHTML() {
@@ -438,8 +513,8 @@ function reviewHTML() {
   let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + h2hHTML(meta);
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
-  h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() +
-    '<details class="card sum"' + (S.sumOpen ? ' open' : '') + '><summary>Move ratings <span class="muted">' + rv.acc.w + '% vs ' + rv.acc.b + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
+  h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
+    '<details class="card sum"' + (S.sumOpen ? ' open' : '') + '><summary>Move ratings <span class="muted">' + accOf(meta, rv, 'w') + '% vs ' + accOf(meta, rv, 'b') + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
     R.CLASSES.filter(k => cw[k] || cb[k] || !['forced', 'brilliant', 'great'].includes(k)).map(k => '<tr><td>' + badge(k) + R.LABEL[k] + '</td><td>' + cw[k] + '</td><td>' + cb[k] + '</td></tr>').join('') + '</table></details>';
   return h + movesList();
 }
@@ -613,6 +688,8 @@ async function nextPuzzle() {
 function insightsHTML() {
   if (!S.games.length) return '<p class="empty">Load your games first.</p>';
   const I = R.insights(S.games, S.reviews), pct = (a, n) => (n ? Math.round(100 * a / n) : 0);
+  const accs = S.games.filter(g => S.reviews[g.id]).map(g => accOf(g, S.reviews[g.id], g.color)).filter(x => x != null);
+  if (accs.length) I.accuracy = Math.round(accs.reduce((a, b) => a + b, 0) / accs.length * 10) / 10;
   const wld = o => '<span class="wld"><i class="w" style="flex:' + o.win + '"></i><i class="d" style="flex:' + o.draw + '"></i><i class="l" style="flex:' + o.loss + '"></i></span><span class="muted">' + o.win + 'W ' + o.draw + 'D ' + o.loss + 'L</span>';
   let h = '<div class="stats"><div><b>' + I.total.n + '</b><span>games loaded</span></div><div><b>' + pct(I.total.win, I.total.n) + '%</b><span>won</span></div><div><b>' + (I.accuracy != null ? I.accuracy + '%' : '–') + '</b><span>accuracy (' + I.reviewed + ' reviewed)</span></div></div>';
   h += weeklyHTML() + eloHTML() + goalsHTML();
@@ -935,7 +1012,7 @@ function botHTML() {
     '<div class="row"><label>I play<select id="botSide">' + opt('r', b.side, 'Random') + opt('w', b.side, 'White') + opt('b', b.side, 'Black') + '</select></label>' +
     '<label>Opponent<select id="botLvl">' + [[-200, 'Easier'], [0, 'My level'], [200, 'Harder'], [400, 'Much harder']].map(x => opt(x[0], b.lvl, x[1] + ' (' + Math.max(400, Math.round((me + x[0]) / 50) * 50) + ')')).join('') + '</select></label></div>' +
     '<div class="row"><button class="btn" data-act="botStart">Start the game</button></div></div>' +
-    (past.length ? '<h3>Your games against it</h3><div class="games">' + past.map(g => { const rv = S.reviews[g.id]; return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span><span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent) + '</b><span class="muted">' + esc([g.opening || 'Unknown opening', when(g.end)].join(' · ')) + '</span></span><span class="gacc">' + (rv ? rv.acc[g.color] + '%' : '<span class="muted">Review</span>') + '</span></button>'; }).join('') + '</div>' : '');
+    (past.length ? '<h3>Your games against it</h3><div class="games">' + past.map(g => { const rv = S.reviews[g.id]; return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span><span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent) + '</b><span class="muted">' + esc([g.opening || 'Unknown opening', when(g.end)].join(' · ')) + '</span></span><span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' : '<span class="muted">Review</span>') + '</span></button>'; }).join('') + '</div>' : '');
 }
 function finishBot(z, won, lost) {
   if (z.sans.length < 4 || z.botMeta) return; // nothing worth keeping
@@ -1076,7 +1153,7 @@ async function syncNow() {
     // puzzle progress, repertoire and the rest: merge item by item, then store whichever side was behind
     const mine = localState(), merged = Y.mergeState(mine, remote['state.json']);
     if (!Y.same(merged, Y.mergeState(mine, null))) {
-      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._cal = null;
+      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._fit = null;
       if (merged.user.v && (merged.user.t > (S.settings.userT || 0) || !S.settings.user.trim())) { S.settings.user = merged.user.v; S.settings.userT = merged.user.t; sets.settings = S.settings; }
       for (const g of merged.pasted) if (!S.games.some(x => x.id === g.id)) S.games.push(g);
       Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
@@ -1114,7 +1191,7 @@ async function syncNow() {
     if (Object.keys(sets).length) await store.set(sets);
     if (Object.keys(out).length) { await gist.write(S.sync.gist, out); Object.assign(remoteCache, out); }
     S.sync.last = Date.now();
-    if (Object.keys(sets).length) softPanel();
+    if (Object.keys(sets).length) { await applyBands(); softPanel(); }
   } catch (e) { S.sync.error = e.message; }
   S.sync.busy = false; paintSync();
 }
@@ -1191,7 +1268,7 @@ function weekStats(from, to) {
   if (o.tc) { const ser = T.ratingSeries(S.hist, o.tc), inw = ser.filter(h => h.end >= from && h.end < to), before = ser.filter(h => h.end < from).pop(); o.change = inw.length ? inw[inw.length - 1].r - (before ? before.r : inw[0].r) : null; o.rating = inw.length ? inw[inw.length - 1].r : null; }
   const rg = S.games.filter(g => g.end >= from && g.end < to && S.reviews[g.id]), avg = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
   o.reviewed = rg.length; o.games = rg;
-  o.acc = avg(rg.map(g => S.reviews[g.id].acc[g.color]).filter(x => x != null));
+  o.acc = avg(rg.map(g => accOf(g, S.reviews[g.id], g.color)).filter(x => x != null));
   o.gr = avg(rg.map(g => gameRating(g, S.reviews[g.id], g.color)).filter(Boolean).map(g => g.rating));
   o.bad = avg(rg.map(g => S.reviews[g.id].recs.filter((r, i) => S.reviews[g.id].colors[i] === g.color && ['mistake', 'miss', 'blunder'].includes(r.cls)).length));
   const th = {}; ownPuzzles().forEach(p => { if (p.date >= from && p.date < to) th[themeOf(p)] = (th[themeOf(p)] || 0) + 1; });
@@ -1421,6 +1498,17 @@ document.addEventListener('click', async e => {
   else if (act === 'repDrill') { const r = S.rep.list[+a.dataset.i]; if (r) { S.tr.course = { name: r.name, line: r.line, side: r.side, idea: ideaFor(r.name) }; startCourse('test'); } }
   else if (act === 'repGame') { const m = S.games.find(g => g.id === a.dataset.id); if (m) openGame(m, +a.dataset.ply); }
   else if (act === 'endPlay') { const e = endCache.get(a.dataset.id); if (e) startSpar(e.color, [], { fen: e.fen, end: e, strong: true }); }
+  else if (act === 'ccRead' && S.cur) {
+    const P = R.parseReview($('#ccPaste').value), id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), got = [];
+    if (P.acc) { o.aw = P.acc[0]; o.ab = P.acc[1]; got.push('accuracy'); }
+    if (P.gr) { o.w = P.gr[0]; o.b = P.gr[1]; got.push('game rating'); }
+    const ks = Object.keys(P.counts);
+    if (ks.length) { o.cw = {}; o.cb = {}; ks.forEach(k => { o.cw[k] = P.counts[k][0]; o.cb[k] = P.counts[k][1]; }); got.push(ks.length + ' move count' + (ks.length === 1 ? '' : 's')); }
+    S.ccMsg = got.length ? 'Read ' + got.join(', ') + '. The first number of each pair is taken as White: if that is the wrong way round, press Swap.' : 'No numbers found. Copy the whole summary from chess.com’s Game Review (accuracy, game rating and the move counts), or type them into the table.';
+    if (got.length) saveCalib(id, o); else renderPanel();
+  }
+  else if (act === 'ccSwap' && S.cur) { const id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), sw = (a, b) => { const x = o[a]; o[a] = o[b]; o[b] = x; if (o[a] == null) delete o[a]; if (o[b] == null) delete o[b]; }; sw('aw', 'ab'); sw('w', 'b'); sw('cw', 'cb'); S.ccMsg = ''; saveCalib(id, o); }
+  else if (act === 'ccClear' && S.cur) { S.ccMsg = ''; saveCalib(S.cur.meta.id, null); }
   else if (act === 'explain') { S.explain = S.cur.meta.id + ':' + S.ply; renderPanel(); }
   else if (act === 'botStart') { const b = S.tr.bot || { side: 'r' }; startSpar(b.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : b.side, [], { bot: { elo: botElo() } }); }
   else if (act === 'botResign') { const z = S.train; if (z && !z.done && !z.busy) { z.resigned = true; endTrain(z); } }
@@ -1446,7 +1534,14 @@ document.addEventListener('click', async e => {
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'user') { S.settings.user = t.value.trim(); S.settings.userT = Date.now(); saveSettings(); touchSync(); }
-  else if (t.dataset && t.dataset.cal && S.cur) { const id = S.cur.meta.id, v = Math.round(+t.value) || 0, o = S.calib[id] || {}; if (v >= 100 && v <= 3500) o[t.dataset.cal] = v; else delete o[t.dataset.cal]; o.t = Date.now(); S.calib[id] = o; S._cal = null; store.set({ calib: S.calib }); touchSync(); render(); }
+  else if (t.dataset && t.dataset.cc && S.cur) {
+    const id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), key = t.dataset.cc, v = +String(t.value).replace(',', '.').replace('%', '');
+    const [k1, k2] = key.split('.'), ok = t.value.trim() !== '' && isFinite(v) && (k2 ? v >= 0 && v <= 300 : /^a/.test(key) ? v >= 0 && v <= 100 : v >= 100 && v <= 3500);
+    const val = k2 ? Math.round(v) : /^a/.test(key) ? Math.round(v * 10) / 10 : Math.round(v);
+    if (k2) { const m = Object.assign({}, o[k1] || {}); if (ok) m[k2] = val; else delete m[k2]; if (Object.keys(m).length) o[k1] = m; else delete o[k1]; }
+    else if (ok) o[key] = val; else delete o[key];
+    S.ccMsg = ''; saveCalib(id, o);
+  }
   else if (t.id === 'depth') { S.settings.depth = t.value; saveSettings(); }
   else if (t.id === 'autoOn') { S.settings.auto = t.checked; saveSettings(); }
   else if (t.id === 'botSide' || t.id === 'botLvl') { (S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }))[t.id === 'botSide' ? 'side' : 'lvl'] = t.value; }
@@ -1464,7 +1559,7 @@ document.addEventListener('input', e => { if (e.target.id === 'opq') { S.tr.q = 
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }
-document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('sum')) S.sumOpen = e.target.open; }, true);
+document.addEventListener('toggle', e => { const c = e.target.classList; if (!c) return; if (c.contains('cc')) S.ccOpen = e.target.open; else if (c.contains('sum')) S.sumOpen = e.target.open; }, true);
 document.addEventListener('keydown', e => {
   const el = e.target, typing = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'checkbox'); // only real typing keeps the arrow keys
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1490,6 +1585,7 @@ document.addEventListener('keydown', e => {
   document.documentElement.classList.toggle('web', !isExt);
   if (!isExt && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* works without it, just not offline */ }); // keeps the app usable with no connection
   await loadAll();
+  await applyBands(); // bands may have been learned on another device
   const want = /#game=(\d+)/.exec(location.hash);
   render();
   // every start: pick up whatever was played since last time, on any device

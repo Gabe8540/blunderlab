@@ -90,7 +90,8 @@ export function phaseOf(fen, ply) {
 /* game: from readGame. evals[i]: engine result for the position before ply i (and one more for the final position):
    { lines: [{ cp | mate, pv: [uci] }, ...] } with scores for the side to move. book: { names, set }.
    Returns one record per ply. Thresholds are chess.com's published expected-points table. */
-export function classify(game, evals, book) {
+export function classify(game, evals, book, k) {
+  k = k || 1; // scales the good / inaccuracy / mistake / blunder bands (see bandOf)
   const out = [];
   let inBook = true;
   game.plies.forEach((p, i) => {
@@ -130,12 +131,12 @@ export function classify(game, evals, book) {
       r.cls = isBest ? 'best' : 'excellent';
       return;
     }
-    if (r.loss < 0.05) { r.cls = 'good'; return; }
-    if (r.loss < 0.1) { r.cls = 'inaccuracy'; return; }
+    if (r.loss < 0.05 * k) { r.cls = 'good'; return; }
+    if (r.loss < 0.1 * k) { r.cls = 'inaccuracy'; return; }
     // failed to punish the opponent's error (or a winning shot), without ending up clearly worse
     const gift = prev && (prev.cls === 'mistake' || prev.cls === 'blunder' || prev.cls === 'miss');
     if ((gift || r.tags.includes('missedMate')) && eAfter >= 0.4 && eBest >= 0.6) { r.cls = 'miss'; return; }
-    r.cls = r.loss < 0.2 ? 'mistake' : 'blunder';
+    r.cls = r.loss < 0.2 * k ? 'mistake' : 'blunder';
   });
   return out;
 }
@@ -410,4 +411,68 @@ export function madePuzzle(fen, lines) {
   const parts = fen.split(' ');
   return { id: 'gen:' + parts[0] + parts[1], made: true, game: '', ply: 0, fen, color, played: '', cls: '', loss: Math.round(gap * 100) / 100, answers: [top.pv[0]], pv: top.pv.slice(0, 8), tags,
     opponent: '', date: 0, phase: phaseOf(fen, (+parts[5] || 1) * 2), box: 0, due: 0, seen: 0, right: 0, e: eTop };
+}
+
+/* ---------- matching chess.com's numbers ---------- */
+
+const BAND = ['good', 'inaccuracy', 'mistake', 'blunder'];
+// The rating for a move that gave away `loss` of the winning chances. k scales the bands: above 1 is more forgiving.
+export const bandOf = (loss, k) => (loss < 0.05 * k ? 'good' : loss < 0.1 * k ? 'inaccuracy' : loss < 0.2 * k ? 'mistake' : 'blunder');
+// Re-rates stored moves with new bands. Brilliant, great, best, excellent, book, forced and miss are left as they are.
+export function reband(recs, k) {
+  let n = 0;
+  for (const r of recs) if (BAND.includes(r.cls)) { const c = bandOf(r.loss, k); if (c !== r.cls) { r.cls = c; n++; } }
+  return n;
+}
+// One side's inaccuracies, mistakes and blunders (misses counted as blunders) as they would be with bands k.
+export function errCounts(recs, colors, color, k) {
+  const o = { inaccuracy: 0, mistake: 0, blunder: 0 };
+  recs.forEach((r, i) => { if (colors[i] !== color) return; const c = BAND.includes(r.cls) ? bandOf(r.loss, k) : r.cls; if (c === 'miss') o.blunder++; else if (c in o) o[c]++; });
+  return o;
+}
+/* A mapping from our number to chess.com's, learned from pairs [ours, theirs]. With a few pairs it is a shift by the
+   average difference, held back toward no change; from four pairs on it blends in a straight-line fit. */
+export function fitLine(pairs) {
+  const n = pairs.length;
+  if (!n) return x => x;
+  const d = pairs.reduce((a, p) => a + p[1] - p[0], 0) / n, off = x => x + d * n / (n + 2);
+  if (n < 4) return off;
+  const mx = pairs.reduce((a, p) => a + p[0], 0) / n, my = pairs.reduce((a, p) => a + p[1], 0) / n;
+  let sxy = 0, sxx = 0;
+  for (const [x, y] of pairs) { sxy += (x - mx) * (y - my); sxx += (x - mx) * (x - mx); }
+  if (sxx < 1e-6) return off;
+  const b = Math.max(0.5, Math.min(1.5, sxy / sxx)), a = my - b * mx, w = (n - 3) / (n + 3);
+  return x => w * (a + b * x) + (1 - w) * off(x);
+}
+const CC_LABEL = { accuracy: 'acc', 'game rating': 'gr', brilliant: 'brilliant', brilliants: 'brilliant', great: 'great', greats: 'great', best: 'best', excellent: 'excellent',
+  good: 'good', book: 'book', inaccuracy: 'inaccuracy', inaccuracies: 'inaccuracy', mistake: 'mistake', mistakes: 'mistake', miss: 'miss', misses: 'miss', missed: 'miss', blunder: 'blunder', blunders: 'blunder' };
+/* Reads the summary copied from chess.com's Game Review: accuracy, game rating and the move counts, for White then Black.
+   Works whether the numbers sit after each label ("Mistake 2 1") or around it ("2 Mistake 1").
+   Returns { acc: [w, b], gr: [w, b], counts: { class: [w, b] }, found } with whatever it could find. */
+export function parseReview(text) {
+  // a number counts only if it stood alone, so "(912)" next to a name, or a name ending in digits, never does
+  const raw = String(text || '').replace(/[|•·:,]/g, ' ').split(/\s+/).filter(Boolean), tok = [];
+  for (let i = 0; i < raw.length; i++) {
+    const t = raw[i].toLowerCase().replace(/[^a-z0-9.%]/g, ''), n = raw[i + 1] ? raw[i + 1].toLowerCase().replace(/[^a-z]/g, '') : '';
+    if (!t) continue; // badges such as !! or ??
+    if (t === 'game' && n === 'rating') { tok.push({ t: 'game rating' }); i++; }
+    else if ((t === 'great' || t === 'best') && /^moves?$/.test(n)) { tok.push({ t }); i++; }
+    else tok.push({ t: t.replace(/%$/, ''), n: /^\d+(\.\d+)?%?$/.test(raw[i]) ? +raw[i].replace('%', '') : null });
+  }
+  const num = i => i >= 0 && i < tok.length && tok[i].n != null && !used.has(i), used = new Set(), out = { counts: {}, found: 0 };
+  tok.forEach((x, i) => {
+    const key = CC_LABEL[x.t];
+    if (!key || (key === 'acc' && out.acc) || (key === 'gr' && out.gr) || out.counts[key]) return;
+    const fits = v => (key === 'acc' ? v.every(y => y >= 0 && y <= 100) : key === 'gr' ? v.every(y => y >= 100 && y <= 3500 && y % 1 === 0) : v.every(y => y <= 300 && y % 1 === 0));
+    for (const pair of [[i - 1, i + 1], [i + 1, i + 2]]) {
+      if (!pair.every(num)) continue;
+      const v = pair.map(j => tok[j].n);
+      if (!fits(v)) continue;
+      pair.forEach(j => used.add(j));
+      if (key === 'acc') out.acc = v; else if (key === 'gr') out.gr = v; else out.counts[key] = v;
+      out.found++;
+      break;
+    }
+  });
+  return out;
 }
