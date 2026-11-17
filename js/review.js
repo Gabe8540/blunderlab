@@ -5,6 +5,20 @@ import { Chess } from './chess.js';
 export const CLASSES = ['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'mistake', 'miss', 'blunder', 'forced'];
 export const LABEL = { brilliant: 'Brilliant', great: 'Great', best: 'Best', excellent: 'Excellent', good: 'Good', book: 'Book',
   inaccuracy: 'Inaccuracy', mistake: 'Mistake', miss: 'Miss', blunder: 'Blunder', forced: 'Forced' };
+// What each rating means, in a line, for the legend and for tooltips.
+export const MEANING = {
+  brilliant: 'The best move, and a hard one to find: usually a sound sacrifice.',
+  great: 'The only good move in the position, or one that turned the game.',
+  best: 'The engine’s first choice.',
+  excellent: 'Nearly as good as the best move.',
+  good: 'A reasonable move, a little short of the best.',
+  book: 'A known opening move.',
+  inaccuracy: 'A weaker move that gives a little away.',
+  mistake: 'A bad move that makes your position clearly worse straight away.',
+  miss: 'A missed chance: a tactic, or a chance to punish your opponent’s error.',
+  blunder: 'A very bad move that gives away material, the advantage or the game.',
+  forced: 'The only legal move.'
+};
 export const SYMBOL = { brilliant: '!!', great: '!', best: '★', excellent: '✓', good: '✓', book: '≡', inaccuracy: '?!', mistake: '?', miss: '×', blunder: '??', forced: '→' };
 const VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 

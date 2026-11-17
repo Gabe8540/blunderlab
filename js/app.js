@@ -363,7 +363,7 @@ function renderStatus() {
   else if (S.notice) { el.hidden = false; el.className = 'note'; el.innerHTML = '<span>' + esc(S.notice.text) + '</span><button class="link" data-act="openNotice">Open</button><button class="link" data-act="clearNotice">Dismiss</button>'; }
   else el.hidden = true;
 }
-const badge = cls => '<b class="badge c-' + cls + '">' + R.SYMBOL[cls] + '</b>';
+const badge = cls => '<b class="badge c-' + cls + '" title="' + R.LABEL[cls] + ': ' + esc(R.MEANING[cls]) + '">' + R.SYMBOL[cls] + '</b>';
 const when = t => t ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
 
 function gamesHTML() {
@@ -515,7 +515,7 @@ function reviewHTML() {
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
   h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
     '<details class="card sum"' + (S.sumOpen ? ' open' : '') + '><summary>Move ratings <span class="muted">' + accOf(meta, rv, 'w') + '% vs ' + accOf(meta, rv, 'b') + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
-    R.CLASSES.filter(k => cw[k] || cb[k] || !['forced', 'brilliant', 'great'].includes(k)).map(k => '<tr><td>' + badge(k) + R.LABEL[k] + '</td><td>' + cw[k] + '</td><td>' + cb[k] + '</td></tr>').join('') + '</table></details>';
+    R.CLASSES.filter(k => cw[k] || cb[k] || k !== 'forced').map(k => '<tr><td><div class="cls">' + badge(k) + '<span><b>' + R.LABEL[k] + '</b><span class="muted mean">' + esc(R.MEANING[k]) + '</span></span></div></td><td>' + cw[k] + '</td><td>' + cb[k] + '</td></tr>').join('') + '</table></details>';
   return h + movesList();
 }
 function movesList() {
