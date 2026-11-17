@@ -211,7 +211,7 @@ async function review(meta, onStep) {
   const evals = await analyseGame(bg, game, R, { depth, movetime: depth >= 18 ? 6000 : 3000 }, onStep, () => cancelBatch);
   if (!evals) return null;
   const k = ccFit().k, recs = R.classify(game, evals, S.book, k);
-  const rv = { depth, k, at: Date.now(), end: meta.end, evals, recs, acc: { w: R.accuracy(recs, game.plies, 'w'), b: R.accuracy(recs, game.plies, 'b') },
+  const rv = { depth, k, bv: 2, at: Date.now(), end: meta.end, evals, recs, acc: { w: R.accuracy(recs, game.plies, 'w'), b: R.accuracy(recs, game.plies, 'b') },
     colors: game.plies.map(p => p.color), clocks: game.plies.map(p => p.clock) };
   S.reviews[meta.id] = rv;
   await store.set({ ['rv:' + meta.id]: rv });
@@ -435,10 +435,11 @@ async function applyBands() {
   let added = false;
   for (const g of S.games) {
     const rv = S.reviews[g.id];
-    if (!rv || (rv.k || 1) === k) continue;
-    R.reband(rv.recs, k); rv.k = k; sets['rv:' + g.id] = rv;
+    if (!rv || ((rv.k || 1) === k && rv.bv === 2)) continue;
     let game;
     try { game = R.readGame(g.pgn); } catch (e) { continue; }
+    if (rv.bv !== 2) { R.markLoses(game, rv.recs, rv.evals); rv.bv = 2; } // reviews from before the blunder rule: work out which big drops lost something
+    R.reband(rv.recs, k); rv.k = k; sets['rv:' + g.id] = rv;
     for (const p of R.makePuzzles(game, rv.recs, rv.evals, g.color, g)) if (!S.puzzles[p.id]) { p.e = R.expPts(rv.evals[p.ply].lines[0]); S.puzzles[p.id] = p; added = true; }
   }
   if (added) sets.puzzles = S.puzzles;

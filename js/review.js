@@ -16,7 +16,7 @@ export const MEANING = {
   inaccuracy: 'A weaker move that gives a little away.',
   mistake: 'A bad move that makes your position clearly worse straight away.',
   miss: 'A missed chance: a tactic, or a chance to punish your opponent’s error.',
-  blunder: 'A very bad move that gives away material, the advantage or the game.',
+  blunder: 'A very bad move that also loses material or the game.',
   forced: 'The only legal move.'
 };
 export const SYMBOL = { brilliant: '!!', great: '!', best: '★', excellent: '✓', good: '✓', book: '≡', inaccuracy: '?!', mistake: '?', miss: '×', blunder: '??', forced: '→' };
@@ -150,7 +150,8 @@ export function classify(game, evals, book, k) {
     // failed to punish the opponent's error (or a winning shot), without ending up clearly worse
     const gift = prev && (prev.cls === 'mistake' || prev.cls === 'blunder' || prev.cls === 'miss');
     if ((gift || r.tags.includes('missedMate')) && eAfter >= 0.4 && eBest >= 0.6) { r.cls = 'miss'; return; }
-    r.cls = r.loss < 0.2 * k ? 'mistake' : 'blunder';
+    r.lose = losesSomething(p, next);
+    r.cls = bandOf(r.loss, k, r.lose);
   });
   return out;
 }
@@ -431,17 +432,43 @@ export function madePuzzle(fen, lines) {
 
 const BAND = ['good', 'inaccuracy', 'mistake', 'blunder'];
 // The rating for a move that gave away `loss` of the winning chances. k scales the bands: above 1 is more forgiving.
-export const bandOf = (loss, k) => (loss < 0.05 * k ? 'good' : loss < 0.1 * k ? 'inaccuracy' : loss < 0.2 * k ? 'mistake' : 'blunder');
+// A big drop is a blunder only when it also loses material or the game (lose); otherwise it counts as a mistake.
+export const bandOf = (loss, k, lose) => (loss < 0.05 * k ? 'good' : loss < 0.1 * k ? 'inaccuracy' : loss < 0.2 * k || lose === false ? 'mistake' : 'blunder');
+function sideMat(fen, color) {
+  let s = 0;
+  for (const ch of fen.split(' ')[0]) { const v = VALUE[ch.toLowerCase()]; if (v) s += (ch === ch.toUpperCase()) === (color === 'w') ? v : -v; }
+  return s;
+}
+/* Does the move p lose material or the game? next: the engine's result for the position after it (scores for the
+   opponent). True when the opponent can force mate, the game is all but lost, a win or draw was thrown away to a
+   finished game, or the engine's best reply line wins a pawn or more from you, counted once any exchange is over. */
+export function losesSomething(p, next) {
+  const r0 = next && next.lines && next.lines[0];
+  if (!r0) return true;
+  if (r0.over) return r0.over !== 'mate'; // a stalemate or other draw out of a better position counts; mating them does not lose
+  if (r0.mate != null && r0.mate > 0) return true;
+  if (1 - expPts(r0) <= 0.15) return true;
+  const c = new Chess(p.after), before = sideMat(p.before, p.color);
+  let n = 0, last = null;
+  for (const u of r0.pv || []) {
+    if ((n >= 6 && !(last && last.captured)) || n >= 10) break;
+    try { last = c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (e) { break; }
+    n++;
+  }
+  return before - sideMat(c.fen(), p.color) >= 1;
+}
+// Sets r.lose on every move of a stored review that dropped enough to be a candidate blunder.
+export function markLoses(game, recs, evals) { recs.forEach((r, i) => { r.lose = r.loss >= 0.1 && game.plies[i] ? losesSomething(game.plies[i], evals[i + 1]) : false; }); }
 // Re-rates stored moves with new bands. Brilliant, great, best, excellent, book, forced and miss are left as they are.
 export function reband(recs, k) {
   let n = 0;
-  for (const r of recs) if (BAND.includes(r.cls)) { const c = bandOf(r.loss, k); if (c !== r.cls) { r.cls = c; n++; } }
+  for (const r of recs) if (BAND.includes(r.cls)) { const c = bandOf(r.loss, k, r.lose); if (c !== r.cls) { r.cls = c; n++; } }
   return n;
 }
 // One side's inaccuracies, mistakes and blunders (misses counted as blunders) as they would be with bands k.
 export function errCounts(recs, colors, color, k) {
   const o = { inaccuracy: 0, mistake: 0, blunder: 0 };
-  recs.forEach((r, i) => { if (colors[i] !== color) return; const c = BAND.includes(r.cls) ? bandOf(r.loss, k) : r.cls; if (c === 'miss') o.blunder++; else if (c in o) o[c]++; });
+  recs.forEach((r, i) => { if (colors[i] !== color) return; const c = BAND.includes(r.cls) ? bandOf(r.loss, k, r.lose) : r.cls; if (c === 'miss') o.blunder++; else if (c in o) o[c]++; });
   return o;
 }
 /* A mapping from our number to chess.com's, learned from pairs [ours, theirs]. With a few pairs it is a shift by the
