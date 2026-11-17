@@ -20,7 +20,7 @@ const S = {
   ply: 0, flipped: false, line: null, // line: { base, moves, step, label }
   puzzle: null,                      // { p, state: 'ask' | 'right' | 'wrong' | 'shown', first, note }
   live: { fen: '', lines: [] }, busy: null, error: '', notice: null,
-  hist: [], histMonths: [], histUser: '', eloTc: '',   // hist: one small record per game, two years back
+  hist: [], histMonths: [], histUser: '', eloTc: '',   // hist: one small record per game, every game you have played
   train: null,                       // a trainer session on the board
   tr: { sub: 'opp', color: 'w', tc: '', q: '', course: null }, opProg: {},
   rep: { t: 0, list: [] }, calib: {}, endProg: {}, scout: null, pzTheme: '', pzMaking: null, pzMsg: '',
@@ -84,7 +84,7 @@ function toMeta(g, user) {
     result: R.outcome(mine && mine.result), how: (mine && mine.result === 'win' ? opp && opp.result : mine && mine.result) || '', opponent: opp && opp.username,
     timeClass: g.time_class || '', end: (g.end_time || 0) * 1000, opening };
 }
-/* Reads games from chess.com. 'full' fetches every month not stored yet (two years back) and re-reads the newest two;
+/* Reads games from chess.com. 'full' fetches every month not stored yet (back to your first game) and re-reads the newest two;
    'quick' reads only the current month. Returns the games that finished since the last time we looked. */
 async function syncGames(mode) {
   const user = S.settings.user.trim(), lower = user.toLowerCase();
@@ -100,13 +100,13 @@ async function syncGames(mode) {
     if (d.getUTCDate() <= 1) months.push(url(new Date(d.getTime() - 2 * 864e5))); // around midnight on the 1st the game may sit in either month
     metaMonths = new Set(months);
   } else {
-    const all = ((await getJSON(base + '/games/archives')).archives || []).slice(-24);
+    const all = (await getJSON(base + '/games/archives')).archives || [];
     metaMonths = new Set(all.slice(-4)); settled = all.slice(0, -2);
     months = all.filter((m, i) => i >= all.length - 2 || !S.histMonths.includes(m)).reverse();
   }
   const known = new Set(S.games.map(g => g.id)), hk = new Map(S.hist.map((h, i) => [h.id, i])), fresh = [];
   for (let i = 0; i < months.length; i++) {
-    if (mode !== 'quick' && S.busy) { S.busy.done = i; S.busy.total = months.length; renderStatus(); }
+    if (mode !== 'quick' && S.busy) { S.busy.done = i; S.busy.total = months.length; if (months.length > 4) S.busy.text = 'Loading your game history from chess.com (month ' + (i + 1) + ' of ' + months.length + ', first time only)'; renderStatus(); }
     let d;
     try { d = await getJSON(months[i]); } catch (e) { if (mode === 'quick') continue; throw e; }
     for (const g of d.games || []) {
@@ -703,6 +703,7 @@ function insightsHTML() {
       '<p class="muted">Pieces left hanging: ' + I.tags.hung + ' · free captures passed up: ' + I.tags.missedCapture + ' · mates allowed: ' + I.tags.allowedMate + ' · mates missed: ' + I.tags.missedMate + '</p></div>';
   }
   h += themesHTML() + clockStatsHTML() + openReportHTML();
+  h += rivalsHTML();
   h += '<h3>Results</h3><div class="card"><div class="orow"><span>As White</span>' + wld(I.byColor.w) + '</div><div class="orow"><span>As Black</span>' + wld(I.byColor.b) + '</div></div>';
   if (I.openings.length) h += '<h3>Your openings</h3><div class="card">' + I.openings.map(o => '<div class="orow"><span>' + esc(o.name) + '</span>' + wld(o) + '</div>').join('') + '</div>';
   return h;
@@ -1296,6 +1297,32 @@ function weeklyHTML() {
   return h + '</div>';
 }
 
+/* ---------- opponents you have played more than once ---------- */
+
+function rivals() {
+  const by = {};
+  for (const h of S.hist) {
+    if (!h.opp) continue;
+    const k = h.opp.toLowerCase(), o = by[k] || (by[k] = { name: h.opp, n: 0, w: 0, d: 0, l: 0, last: 0 });
+    o.n++; o[h.res === 'win' ? 'w' : h.res === 'draw' ? 'd' : 'l']++;
+    if (h.end >= o.last) { o.last = h.end; o.name = h.opp; o.rating = h.o || o.rating; }
+  }
+  return Object.values(by).filter(o => o.n > 1).sort((a, b) => b.n - a.n || b.last - a.last);
+}
+function rivalsHTML() {
+  if (!S.hist.length) return '';
+  const list = rivals(), missing = S.hist.some(h => h.opp === undefined);
+  if (!list.length) return '<h3>Opponents you have played more than once</h3><div class="card"><p class="muted">' + (missing ? 'Your history is still being read again with opponents’ names. Check back after the next load.' : 'None yet: every opponent so far, you have played only once.') + '</p></div>';
+  const games = list.reduce((a, o) => a + o.n, 0), w = list.reduce((a, o) => a + o.w, 0), d = list.reduce((a, o) => a + o.d, 0), l = list.reduce((a, o) => a + o.l, 0);
+  const show = S.rivAll ? list : list.slice(0, 15), yr = t => new Date(t).getFullYear() !== new Date().getFullYear();
+  return '<h3>Opponents you have played more than once</h3><div class="card"><p>' + list.length + ' opponent' + (list.length === 1 ? '' : 's') + ', ' + games + ' games: ' + w + 'W ' + d + 'D ' + l + 'L against them, out of ' + S.hist.length + ' games in your whole history.</p>' +
+    '<table class="riv"><tr><th>Opponent</th><th>Games</th><th>Record</th><th>Score</th><th>Last</th><th></th></tr>' +
+    show.map(o => '<tr><td>' + esc(o.name) + (o.rating ? ' <span class="muted">' + o.rating + '</span>' : '') + '</td><td>' + o.n + '</td><td>' + o.w + '-' + o.d + '-' + o.l + '</td><td class="' + (T.score(o) > 50 ? 'up' : T.score(o) < 50 ? 'down' : '') + '">' + T.score(o) + '%</td><td>' +
+      new Date(o.last).toLocaleDateString([], yr(o.last) ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' }) + '</td><td><button class="link" data-act="rivScout" data-v="' + esc(o.name) + '">Scout</button></td></tr>').join('') + '</table>' +
+    (list.length > 15 ? '<div class="row"><button class="link" data-act="rivAll">' + (S.rivAll ? 'Show the top 15' : 'Show all ' + list.length) + '</button></div>' : '') +
+    '<p class="muted">Record is wins-draws-losses, all time controls. Rated and unrated games both count.</p></div>';
+}
+
 /* ---------- scouting an opponent ---------- */
 
 async function scoutGo(name) {
@@ -1523,6 +1550,8 @@ document.addEventListener('click', async e => {
   else if (act === 'syncGo') syncNow();
   else if (act === 'syncOff') { S.sync.token = ''; S.sync.gist = ''; S.sync.last = 0; S.sync.error = ''; gist = null; await store.set({ syncToken: '', syncGist: '' }); paintSync(); }
   else if (act === 'scoutGo') scoutGo($('#scoutUser').value);
+  else if (act === 'rivAll') { S.rivAll = !S.rivAll; renderPanel(); }
+  else if (act === 'rivScout') { S.tab = 'trainer'; S.tr.sub = 'scout'; render(); scoutGo(a.dataset.v); }
   else if (act === 'scPlay') scoutSpar(a.dataset.side, []);
   else if (act === 'scFrom') scoutSpar(a.dataset.side, a.dataset.line.split(' '));
   else if (act === 'trRep') { const k = S.tr.course, i = S.rep.list.findIndex(r => r.name === k.name && r.side === k.side); if (i >= 0) S.rep.list.splice(i, 1); else S.rep.list.push({ name: k.name, side: k.side, line: k.line }); saveRep(); renderPanel(); }
@@ -1622,7 +1651,7 @@ document.addEventListener('keydown', e => {
   render();
   // every start: pick up whatever was played since last time, on any device
   let fresh = [];
-  S.busy = { text: S.hist.length ? 'Checking chess.com for new games' : 'Loading your games from chess.com (two years of history, first time only)', done: 0, total: 1 }; renderStatus();
+  S.busy = { text: S.hist.length ? 'Checking chess.com for new games' : 'Loading your games from chess.com (your whole history, first time only)', done: 0, total: 1 }; renderStatus();
   const offline = !isExt && navigator.onLine === false;
   if (offline) S.error = 'You are offline. Puzzles, the trainer and saved reviews still work.';
   else try { fresh = await syncGames('full'); } catch (err) { if (!S.games.length || want) S.error = err.message; }
