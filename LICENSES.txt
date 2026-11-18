@@ -6,6 +6,7 @@ Blunder Lab bundles these open-source parts:
   Source: https://github.com/nmrugg/stockfish.js and https://github.com/official-stockfish/Stockfish
 - chess.js 1.4.0 by Jeff Hlywa. BSD 2-Clause licence. https://github.com/jhlywa/chess.js
 - Chess pieces by Colin M.L. Burnett ("cburnett"), licensed GPLv2+ (also GFDL and BSD).
+- Pixel chess pieces (pieces/pixel/) are original to Blunder Lab and covered by its own licence.
 - Opening names from lichess-org/chess-openings. CC0 public-domain dedication.
 
 Blunder Lab's own code (the files in this folder outside engine/, js/chess.js, pieces/ and
