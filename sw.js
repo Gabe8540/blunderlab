@@ -1,8 +1,8 @@
 // Blunder Lab web app: keeps a copy of the app's own files so it opens and runs with no connection.
 // The network is tried first, so a new version shows up as soon as you are online; the copy is the fallback.
 // Pieces, the engine and icons come from the copy straight away: fetching them again made the board flash.
-const CACHE = 'blunderlab-2.0.0';
-const FILES = ['./', 'index.html', 'app.css', 'site.webmanifest', 'js/app.js', 'js/board.js', 'js/chess.js', 'js/courses.js', 'js/engine.js', 'js/platform.js', 'js/review.js', 'js/sync.js', 'js/trainer.js',
+const CACHE = 'blunderlab-2.1.0';
+const FILES = ['./', 'index.html', 'app.css', 'site.webmanifest', 'js/app.js', 'js/board.js', 'js/chess.js', 'js/courses.js', 'js/engine.js', 'js/platform.js', 'js/review.js', 'js/sync.js', 'js/trainer.js', 'js/academy.js',
   'data/book.json', 'data/openings.json', 'engine/stockfish-19-lite-single.js', 'engine/stockfish-19-lite-single.wasm', 'icons/icon32.png', 'icons/icon180.png', 'icons/icon192.png']
   .concat(['w', 'b'].flatMap(c => ['K', 'Q', 'R', 'B', 'N', 'P'].map(p => 'pieces/' + c + p + '.svg')));
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => Promise.all(FILES.map(f => c.add(f).catch(() => { /* one missing file must not stop the rest */ })))).then(() => self.skipWaiting())); });

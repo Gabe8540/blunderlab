@@ -385,3 +385,31 @@ details.card:not([open])>summary{margin:-2px 0}
   .lines{height:104px}
 }
 @media (pointer:coarse){.moves .mv{padding:7px 8px}}
+
+/* course drills */
+.board.nocoord .rank,.board.nocoord .file{display:none}
+.board.tapping .sq{cursor:pointer}
+.sq.mk-ask::before{content:"";position:absolute;inset:0;background:rgba(60,160,230,.55);box-shadow:inset 0 0 0 3px #2F78C4}
+.sq.mk-ok::before{content:"";position:absolute;inset:0;background:rgba(78,154,46,.6)}
+.sq.mk-bad::before{content:"";position:absolute;inset:0;background:rgba(201,48,44,.55)}
+.course .stage{display:block}
+.lesson{display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:11px 4px;color:inherit}
+.lesson:last-child{border-bottom:0}
+.lesson:hover{background:var(--surface2)}
+.lesson .lnum{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:700 12px var(--mono);background:var(--surface2);border:1px solid var(--line);flex:none}
+.lesson.done .lnum{background:var(--best);border-color:var(--best);color:#fff}
+.lesson.next .lnum{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.lesson .lmain span{font-size:12.5px}
+.area{display:inline-block;font:700 10.5px system-ui;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:6px}
+.keys{margin:8px 0 4px;padding-left:18px}.keys li{margin:3px 0}
+.ex{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:9px 0;border-top:1px solid var(--line)}
+.ex b{font-weight:600}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.opts button{border:1px solid var(--line);background:var(--surface2);border-radius:11px;padding:12px 8px;font:700 16px var(--mono);color:var(--ink)}
+.opts button.ok{background:var(--best);border-color:var(--best);color:#fff}.opts button.bad{background:var(--blunder);border-color:var(--blunder);color:#fff}
+.opts.words button{font:600 14px system-ui}
+.seqtxt{font:600 16px/1.7 var(--mono);word-spacing:3px;background:var(--surface2);border-radius:10px;padding:10px 12px;margin:8px 0}
+.lvl{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted)}
+.lvl .track{max-width:140px}
+.plan li{margin:6px 0}
+.plan .tick{margin-right:4px}

@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 2.0.0**
+**Current version: 2.1.0**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -42,6 +42,13 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Openings: starter main lines, the openings you play, and about 3,200 named openings to learn and test
 - Repertoire: pick your openings and see where you left them in your games
 - Endgames: play out winning or level endgames from your own games against Stockfish
+
+**Course (Trainer tab)**
+- Starts at the stage that fits your rating, from Foundations to Think like a stronger player, and points out what your reviewed games say to work on
+- 22 lessons across notation, visualization, opening, middlegame, tactics and endgame, each with practice: positions to play out against Stockfish, themed puzzles and links into the other trainers
+- Visualization drills: study a position, read the moves without seeing them, then say where the pieces are; the level adjusts as you go, up to 14 moves with a diagram that disappears on its own
+- Notation drills: name and tap squares, play a written move, pick how a played move is written, from Black's side and without coordinates as you level up
+- A plan for each day and progress that syncs between devices
 
 **Insights**
 - Plain-language findings from every game you have played: weak colour, the clock, tilt after losses, long sessions, best time of day, problem openings, early collapses, recent trend

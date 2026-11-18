@@ -89,8 +89,16 @@ export function mergeState(a, b) {
     goals: newer(a.goals, b.goals) || { t: 0 },
     daily: mergeDaily(a.daily, b.daily),
     act: (() => { const out = {}; for (const src of [a.act || {}, b.act || {}]) for (const day in src) { const o = out[day] || (out[day] = {}); for (const k in src[day]) o[k] = Math.max(o[k] || 0, src[day][k]); } return out; })(),
-    pasted: Object.values(pasted)
+    pasted: Object.values(pasted),
+    ac: mergeAc(a.ac, b.ac)
   };
+}
+// The course: lessons done on any device count; each drill keeps the device that has done more of it.
+function mergeAc(a, b) {
+  a = a || {}; b = b || {};
+  const more = (x, y) => (((x && x.n) || 0) >= ((y && y.n) || 0) ? x : y) || { lvl: 1, n: 0, right: 0, run: 0 }, days = {};
+  for (const src of [a.days || {}, b.days || {}]) for (const d in src) { const o = days[d] || (days[d] = {}); for (const k in src[d]) o[k] = Math.max(o[k] || 0, src[d][k]); }
+  return { done: Object.assign({}, a.done, b.done), viz: more(a.viz, b.viz), nota: more(a.nota, b.nota), days };
 }
 // One month of reviews: { gameId: { g: game, rv: review } }. The deeper review wins; at equal depth, the later one.
 export const mergeMonth = (a, b) => pickMap(a, b, (x, y) => (x.rv.depth || 0) > (y.rv.depth || 0) || ((x.rv.depth || 0) === (y.rv.depth || 0) && (x.rv.at || 0) > (y.rv.at || 0)));

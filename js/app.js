@@ -7,6 +7,7 @@ import * as T from './trainer.js';
 import { CORE, ideaFor } from './courses.js';
 import { store, isExt, touch } from './platform.js';
 import * as Y from './sync.js';
+import * as A from './academy.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -22,7 +23,7 @@ const S = {
   live: { fen: '', lines: [] }, busy: null, error: '', notice: null,
   hist: [], histMonths: [], histUser: '', eloTc: '',   // hist: one small record per game, every game you have played
   train: null,                       // a trainer session on the board
-  tr: { sub: 'opp', color: 'w', tc: '', q: '', course: null }, opProg: {},
+  tr: { sub: 'course', color: 'w', tc: '', q: '', course: null }, opProg: {}, ac: { done: {}, viz: { lvl: 1, n: 0, right: 0, run: 0 }, nota: { lvl: 1, n: 0, right: 0, run: 0 }, days: {} },
   rep: { t: 0, list: [] }, calib: {}, endProg: {}, scout: null, pzTheme: '', pzMaking: null, pzMsg: '',
   trainGames: [], // other players' games, hidden everywhere but the tuning (removed ones stay as { id, removed })
   goals: { t: 0 }, act: {}, explain: '', drillMsg: '', daily: { day: '', t: 0, list: [], res: {} },
@@ -39,7 +40,7 @@ async function loadAll() {
   S.puzzles = d.puzzles || {};
   S.hist = d.hist || []; S.histMonths = d.histMonths || []; S.histUser = d.histUser || ''; S.opProg = d.opProg || {};
   S.rep = d.rep || { t: 0, list: [] }; S.calib = d.calib || {}; S.endProg = d.endProg || {};
-  S.trainGames = d.trainGames || [];
+  S.trainGames = d.trainGames || []; if (d.ac) S.ac = d.ac;
   S.goals = d.goals || { t: 0 }; S.act = d.act || {}; if (d.daily && d.daily.list) S.daily = d.daily;
   if ((d.histV || 1) < 3) S.histMonths = []; // older records lack the opponent's name or how the game ended: read the months again once
   S.sync.token = d.syncToken || ''; S.sync.gist = d.syncGist || '';
@@ -266,7 +267,7 @@ async function openGame(meta, ply) {
 
 function shown() { // { fen, last, whiteToMove }
   if (S.puzzle && !S.line) return { fen: S.puzzle.fen || S.puzzle.p.fen, last: S.puzzle.last || null };
-  if (S.train && !S.line) return { fen: S.train.c.fen(), last: S.train.last };
+  if (S.train && !S.line) return { fen: S.train.blind ? '8/8/8/8/8/8/8/8 w - - 0 1' : S.train.c.fen(), last: S.train.last };
   if (S.line) { const m = S.line.step ? S.line.moves[S.line.step - 1] : null; return { fen: m ? m.fen : S.line.base, last: m ? [m.from, m.to] : null }; }
   if (!S.cur) return { fen: new Chess().fen(), last: null };
   const p = S.ply ? S.cur.game.plies[S.ply - 1] : null;
@@ -283,6 +284,7 @@ function storedLines(fen) { // lines the review already has for this position
 }
 function startLive() {
   const { fen } = shown(), token = ++liveToken;
+  if (S.train && S.train.blind && !S.line) { S.live = { fen, lines: [], over: null }; return; } // a drill's empty board: nothing to analyse
   S.live = { fen, lines: storedLines(fen), over: R.terminalScore(fen) };
   if (!live) return;
   // Chess960: the engine needs to know, and the game's own positions carry their castling rights in a second FEN
@@ -313,7 +315,8 @@ function renderBoard() {
   const z = S.train;
   if (z && !S.line) { if (z.arrow) arrows.push({ from: z.arrow.from, to: z.arrow.to, kind: 'line' }); if (z.tried && !z.done) arrows.push({ from: z.tried.slice(0, 2), to: z.tried.slice(2, 4), kind: 'bad' }); }
   const movable = S.line ? null : S.puzzle ? (S.puzzle.state === 'ask' || S.puzzle.state === 'wrong' ? S.puzzle.p.color : null) : z ? (myTurn(z) ? z.color : null) : null;
-  board.render({ fen: v.fen, flipped: S.flipped, last: v.last, arrows, badge, movable });
+  const dz = z && !S.line && (z.mode === 'viz' || z.mode === 'nota') ? z : null;
+  board.render({ fen: v.fen, flipped: S.flipped, last: v.last, arrows, badge, movable: dz ? (dz.kind === 'read' && dz.state === 'ask' ? dz.color : null) : movable, tap: !!(dz && dz.tap), nocoord: !!(dz && dz.nocoord), marks: dz ? dz.marks : null });
 }
 function renderBar() {
   const v = shown(), bar = $('#bar');
@@ -782,7 +785,7 @@ function foldAll(html, page, open) {
   const parts = html.split('<h3>');
   return parts[0] + parts.slice(1).map(x => {
     const i = x.indexOf('</h3>'), title = x.slice(0, i), body = x.slice(i + 5), k = page + ':' + title.replace(/<[^>]+>/g, '').replace(/\s*\(.*$/, '').trim();
-    const on = S.fold && k in S.fold ? S.fold[k] : open.some(o => k.endsWith(':' + o));
+    const on = S.fold && k in S.fold ? S.fold[k] : open.some(o => k.slice(page.length + 1).startsWith(o));
     return '<details class="fold" data-k="' + esc(k) + '"' + (on ? ' open' : '') + '><summary>' + title + '</summary>' + body + '</details>';
   }).join('');
 }
@@ -881,7 +884,7 @@ function newSession(mode, color) {
   S.puzzle = null; S.line = null; S.tab = 'trainer'; S.flipped = color === 'b';
   return S.train = { mode, color, c: new Chess(), sans: [], last: null, node: null, opening: '', msg: '', opp: '', fb: null, arrow: null, tried: null, busy: false, done: false };
 }
-const myTurn = z => !z.done && !z.busy && z.c.turn() === z.color;
+const myTurn = z => !z.done && !z.busy && z.c.turn() === z.color && (z.mode !== 'nota' || z.state === 'ask');
 const quick = fen => live.analyse(fen, { depth: 12, multipv: 1, movetime: 1200 });
 function endTrain(z) {
   z.done = true; z.busy = false; z.arrow = null;
@@ -908,7 +911,7 @@ function startSpar(color, sans, opt) {
   z.tree = z.node = opt.bot && opt.bot.me ? T.buildTree(S.hist, color === 'w' ? 'b' : 'w') : opt.fen || opt.bot ? null : opt.tree || T.buildTree(S.hist, color, S.tr.tc);
   try { for (const s of sans || []) pushMove(z, s); } catch (e) { /* a move that no longer fits: start from where it stopped */ }
   z.msg = opt.end || opt.bot ? 'Your move.' : z.sans.length ? 'Your move. Play on from here.' : 'Your move. Play your opening.';
-  z.opp = opt.bot && opt.bot.me ? 'Your double plays your openings, then makes mistakes as often and as big as you do. No hints and no take-backs. The game is reviewed when it ends.' : opt.bot ? 'Stockfish is set to about ' + opt.bot.elo + '. No hints and no take-backs. The game is reviewed when it ends.' : opt.end ? (opt.end.goal === 'win' ? 'You were winning here (' + opt.end.score + '). Convert it against Stockfish at full strength.' : 'This was level (' + opt.end.score + '). Hold the draw, or better, against Stockfish at full strength.') :
+  z.opp = opt.end && opt.end.note ? opt.end.note + (opt.end.goal === 'win' ? ' Stockfish defends at full strength.' : ' Stockfish attacks at full strength.') : opt.bot && opt.bot.me ? 'Your double plays your openings, then makes mistakes as often and as big as you do. No hints and no take-backs. The game is reviewed when it ends.' : opt.bot ? 'Stockfish is set to about ' + opt.bot.elo + '. No hints and no take-backs. The game is reviewed when it ends.' : opt.end ? (opt.end.goal === 'win' ? 'You were winning here (' + opt.end.score + '). Convert it against Stockfish at full strength.' : 'This was level (' + opt.end.score + '). Hold the draw, or better, against Stockfish at full strength.') :
     opt.who ? 'The replies are ' + opt.who + '’s own moves, as often as they played them.' : 'The replies come from your real opponents, as often as they played them.';
   render();
   if (z.c.turn() !== color) oppMove(z); else if (!opt.bot) z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
@@ -1031,7 +1034,7 @@ function trainMove(from, to) {
   const z = S.train;
   if (!z || !myTurn(z)) { renderBoard(); return; }
   const p = z.c.get(from), promo = p && p.type === 'p' && /[18]$/.test(to) ? 'q' : undefined;
-  if (z.mode === 'spar') sparMove(z, from, to, promo); else courseMove(z, from, to, promo);
+  if (z.mode === 'nota') notaMove(z, from, to, promo); else if (z.mode === 'spar') sparMove(z, from, to, promo); else courseMove(z, from, to, promo);
 }
 function openCourse(name, line, side) {
   const sans = line.split(' ');
@@ -1052,6 +1055,8 @@ function lineRow(l, o) { // o: { act, side, they } for a scouted player's lines
 }
 function trainSessionHTML() {
   if (S.train.mode === 'drill') return drillHTML();
+  if (S.train.mode === 'viz') return vizHTML();
+  if (S.train.mode === 'nota') return notaHTML();
   const z = S.train, side = z.color === 'w' ? 'White' : 'Black', spar = z.mode === 'spar';
   const tone = !z.fb ? '' : ['best', 'good'].includes(z.fb.cls) ? 'right' : z.fb.cls === 'inaccuracy' ? 'shown' : 'wrong';
   let h = '<div class="card pz ' + tone + '"><div class="lbl">' + (spar ? (z.opt.bot ? (z.opt.bot.me ? 'Game against your double' : 'Game against Stockfish ' + z.opt.bot.elo) : z.opt.end ? 'Endgame practice' : z.opt.who ? 'Playing ' + esc(z.opt.who) : 'Playing your opponents') : z.mode === 'learn' ? 'Learning the line' : 'Testing the line') + ' · you are ' + side + '</div>' +
@@ -1085,7 +1090,8 @@ const openRow = (name, label, extra) => '<button class="orow2" data-open="' + es
 function trainerHTML() {
   if (S.train) return trainSessionHTML();
   const t = S.tr;
-  let h = '<div class="seg">' + [['opp', 'My opponents'], ['bot', 'Play a game'], ['scout', 'Scout'], ['open', 'Openings'], ['rep', 'Repertoire'], ['end', 'Endgames'], ['drill', 'Blunder check']].map(x => '<button data-act="trSub" data-v="' + x[0] + '" aria-pressed="' + (t.sub === x[0]) + '">' + x[1] + '</button>').join('') + '</div>';
+  let h = '<div class="seg">' + [['course', 'Course'], ['opp', 'My opponents'], ['bot', 'Play a game'], ['scout', 'Scout'], ['open', 'Openings'], ['rep', 'Repertoire'], ['end', 'Endgames'], ['drill', 'Blunder check']].map(x => '<button data-act="trSub" data-v="' + x[0] + '" aria-pressed="' + (t.sub === x[0]) + '">' + x[1] + '</button>').join('') + '</div>';
+  if (t.sub === 'course') return h + academyHTML();
   if (t.sub === 'bot') return h + botHTML();
   if (t.sub === 'drill') return h + drillIntroHTML();
   if (t.sub === 'scout') return h + scoutHTML();
@@ -1262,6 +1268,185 @@ function drillHTML() {
   return h + '</div><div class="row"><button class="link" data-act="trStop">Stop</button></div>';
 }
 
+/* ---------- the course: lessons by stage, plus visualization and notation drills ---------- */
+
+const acSave = () => { store.set({ ac: S.ac }); touchSync(); };
+function acDay() { const k = T.dayKey(Date.now()); S.ac.days = S.ac.days || {}; const old = T.dayKey(Date.now() - 60 * 864e5); for (const d in S.ac.days) if (d < old) delete S.ac.days[d]; return S.ac.days[k] || (S.ac.days[k] = {}); }
+function acStage() { return A.stageFor(myElo()); }
+function acNext() { // the first lesson not done, from your stage on; earlier stages only when everything later is done
+  const st = acStage(), L = A.LESSONS;
+  return L.find(l => l.stage >= st && !S.ac.done[l.id]) || L.find(l => !S.ac.done[l.id]) || null;
+}
+function acWeak() { // what your reviewed games say to work on, in course terms
+  const I = R.insights(S.games, S.reviews);
+  if (!I.reviewed) return null;
+  const ph = Object.keys(I.phases).filter(k => I.phases[k].moves >= 10).sort((a, b) => I.phases[b].bad / I.phases[b].moves - I.phases[a].bad / I.phases[a].moves)[0];
+  return { phase: ph, hung: I.tags.hung, mates: I.tags.allowedMate + I.tags.missedMate, games: I.reviewed };
+}
+function academyHTML() {
+  if (S.acLesson) return lessonHTML(A.LESSONS.find(l => l.id === S.acLesson));
+  const elo = myElo(), st = acStage(), stage = A.STAGES[st - 1], next = acNext(), day = acDay(), w = acWeak();
+  const doneN = A.LESSONS.filter(l => S.ac.done[l.id]).length;
+  let h = '<div class="card"><div class="lbl">Your starting point</div><h3 class="big">Stage ' + st + ': ' + stage.name + '</h3><p>Your rating is about ' + elo + ', so the course starts at the stage for ' + stage.range + '. Earlier stages stay open if you want to review. Visualization and notation drills set their own level as you answer: the first few questions move you up fast until you miss one.</p>' +
+    (w ? '<p class="muted">From your ' + w.games + ' reviewed games: most errors come in the ' + w.phase + '; ' + w.hung + ' pieces left hanging; ' + w.mates + ' mates missed or allowed.</p>' : '') +
+    '<div class="lvl">' + doneN + ' of ' + A.LESSONS.length + ' lessons done<span class="track"><i style="width:' + Math.round(100 * doneN / A.LESSONS.length) + '%"></i></span></div></div>';
+  const tick = ok => (ok ? '<i class="tick">✓</i>' : '');
+  h += '<h3>Today</h3><div class="card"><ol class="plan">' +
+    (next ? '<li>' + tick(day.les) + 'Lesson: <b>' + esc(next.title) + '</b> <button class="link" data-act="acOpen" data-v="' + next.id + '">Open</button></li>' : '<li>' + tick(1) + 'Every lesson is done. Keep the drills going.</li>') +
+    '<li>' + tick((day.viz || 0) >= 10) + 'Visualization: 10 questions <span class="muted">(' + (day.viz || 0) + ' today)</span> <button class="link" data-act="acViz">Start</button></li>' +
+    '<li>' + tick((day.nota || 0) >= 15) + 'Notation: 15 questions <span class="muted">(' + (day.nota || 0) + ' today)</span> <button class="link" data-act="acNota">Start</button></li>' +
+    '<li>' + tick(((S.act[T.dayKey(Date.now())] || {}).pz || 0) >= 5) + 'Puzzles: 5 <button class="link" data-act="acPz">Go</button></li></ol></div>';
+  const lv = (name, o, act) => '<div class="lrow"><div class="lmain"><b>' + name + ' · level ' + o.lvl + '</b><span class="lnote muted">' + (o.n ? o.right + ' of ' + o.n + ' right overall' : 'Not started: the first questions find your level') + '</span></div><button class="btn small" data-act="' + act + '">Train</button></div>';
+  h += '<h3>Drills</h3>' + lv('Visualization', S.ac.viz, 'acViz') + lv('Notation', S.ac.nota, 'acNota');
+  for (const S2 of A.STAGES) {
+    const ls = A.LESSONS.filter(l => l.stage === S2.n);
+    h += '<h3>Stage ' + S2.n + ': ' + S2.name + ' (' + S2.range + ')</h3><div class="card olist">' + ls.map(l => '<button class="lesson' + (S.ac.done[l.id] ? ' done' : next && next.id === l.id ? ' next' : '') + '" data-act="acOpen" data-v="' + l.id + '"><span class="lnum">' + (S.ac.done[l.id] ? '✓' : A.LESSONS.indexOf(l) + 1) + '</span><span class="lmain"><b>' + esc(l.title) + '</b><span class="muted"><span class="area">' + A.AREAS[l.area] + '</span>' + (S2.n < st ? 'review' : '') + '</span></span></button>').join('') + '</div>';
+  }
+  return foldAll(h, 'ac', ['Today', 'Drills', 'Stage ' + st]);
+}
+function lessonHTML(l) {
+  if (!l) { S.acLesson = null; return academyHTML(); }
+  const exs = l.do.map((x, i) => {
+    let st = '';
+    if (x.t === 'play') { const p = S.endProg['ac:' + l.id + ':' + i]; st = p ? (p.ok ? '<i class="tick">✓</i>' : '') + '<span class="muted">' + p.ok + ' of ' + p.n + '</span>' : ''; }
+    return '<div class="ex"><span>' + st + ' <b>' + esc(x.label) + '</b></span><button class="btn small' + (i ? ' ghost' : '') + '" data-act="acEx" data-v="' + i + '">' + (x.t === 'play' ? 'Play' : 'Go') + '</button></div>';
+  }).join('');
+  return '<div class="row"><button class="link" data-act="acBack">← All lessons</button></div><div class="card"><div class="lbl">Stage ' + l.stage + ' · ' + A.AREAS[l.area] + '</div><h3 class="big">' + esc(l.title) + '</h3>' +
+    l.text.map(t => '<p>' + esc(t) + '</p>').join('') + '<div class="lbl">Remember</div><ul class="keys">' + l.key.map(k => '<li>' + esc(k) + '</li>').join('') + '</ul></div>' +
+    '<h3>Practise it</h3><div class="card">' + exs + '</div>' +
+    '<div class="row"><button class="btn' + (S.ac.done[l.id] ? ' ghost' : '') + '" data-act="acDone">' + (S.ac.done[l.id] ? 'Done ✓ (tap to undo)' : 'I’ve got this: mark it done') + '</button></div>' +
+    (l.read ? '<p class="muted">To read more on this: ' + esc(l.read) + '.</p>' : '');
+}
+function acExercise(i) {
+  const l = A.LESSONS.find(x => x.id === S.acLesson), x = l && l.do[i];
+  if (!x) return;
+  acDay().les = Math.max(acDay().les || 0, 0); acSave();
+  if (x.t === 'play') { engines(); startSpar(x.side, [], { fen: x.fen, end: { id: 'ac:' + l.id + ':' + i, goal: x.goal, score: '', note: x.label + '.' }, strong: true }); return; }
+  if (x.t === 'viz') return startViz();
+  if (x.t === 'nota') return startNota();
+  if (x.t === 'puzzles') { S.tab = 'puzzles'; S.pzTheme = x.theme; S.pzMsg = ''; render(); return; }
+  S.tr.sub = x.t; S.acLesson = null; render();
+  if (x.t === 'open' && !openList) loadOpenings().then(() => { if (S.tab === 'trainer' && !S.train) softTrainer(); });
+}
+// level up after a run of right answers (fast while still finding your level), down after a miss
+function acLevel(o, ok, runUp) {
+  o.n++; if (ok) o.right++;
+  if (!ok) { o.placed = true; o.run = 0; o.lvl = Math.max(1, o.lvl - 1); return; }
+  o.run++;
+  if (!o.placed || o.run >= runUp) { o.lvl++; o.run = 0; }
+}
+
+/* visualization: study a position, then read moves without seeing them, then answer where things are */
+function startViz() {
+  engines();
+  const o = S.ac.viz, it = A.vizItem(S.games.filter(g => !g.v960 && g.pgn), o.lvl);
+  const z = newSession('viz', 'w');
+  z.it = it; z.c = new Chess(it.start); z.state = 'study'; z.qi = 0; z.ok = []; z.busy = true;
+  S.flipped = o.lvl >= 6 && Math.random() < 0.5;
+  const secs = A.vizShowSecs(o.lvl);
+  if (secs) z.timer = setTimeout(() => { if (S.train === z && z.state === 'study') vizBlind(z); }, secs * 1000);
+  render();
+}
+function vizBlind(z) { z.state = 'q'; z.blind = true; vizAsk(z); }
+function vizAsk(z) {
+  const q = z.it.ask[z.qi];
+  z.tap = q.type === 'tap'; z.marks = q.type === 'what' ? { [q.sq]: 'ask' } : null;
+  render();
+}
+function vizAnswer(z, got) {
+  const q = z.it.ask[z.qi], ok = got === q.answer;
+  z.ok.push({ q, got, ok });
+  if (++z.qi < z.it.ask.length) return vizAsk(z);
+  z.state = 'done'; z.tap = false; z.blind = false; z.c = new Chess(z.it.end);
+  z.marks = {}; for (const r of z.ok) { const sq = r.q.type === 'tap' ? r.q.answer : r.q.sq; z.marks[sq] = r.ok || r.q.type === 'tap' ? 'ok' : 'bad'; if (r.q.type === 'tap' && !r.ok && /^[a-h][1-8]$/.test(r.got)) z.marks[r.got] = 'bad'; }
+  const all = z.ok.every(r => r.ok);
+  acLevel(S.ac.viz, all, 3); const d = acDay(); d.viz = (d.viz || 0) + z.ok.length; acSave();
+  render();
+}
+function vizHTML() {
+  const z = S.train, o = S.ac.viz, it = z.it, start = new Chess(it.start), mv = +it.start.split(' ')[5], white = start.turn() === 'w';
+  const seq = it.seq.map((m, i) => { const ply = (white ? 0 : 1) + i, n = mv + Math.floor(ply / 2); return (ply % 2 === 0 ? n + '.' : i === 0 ? n + '...' : '') + m.san; }).join(' ');
+  let h = '<div class="card pz ' + (z.state === 'done' ? (z.ok.every(r => r.ok) ? 'right' : 'wrong') : '') + '"><div class="lbl">Visualization · level ' + o.lvl + ' · ' + it.seq.length + ' moves to read</div>';
+  if (z.state === 'study') h += '<h3>Study the position</h3><p>' + (white ? 'White' : 'Black') + ' to move. Take a mental photo: kings, queens, and where every piece stands. ' + (A.vizShowSecs(o.lvl) ? 'It disappears in ' + A.vizShowSecs(o.lvl) + ' seconds.' : 'Press Ready when you have it; the pieces will disappear.') + '</p><div class="row"><button class="btn" data-act="vizReady">Ready</button></div>';
+  else if (z.state === 'q') {
+    const q = it.ask[z.qi];
+    h += '<p>Play these moves in your head, from the position you studied:</p><div class="seqtxt">' + esc(seq) + '</div><h3>' + (z.qi + 1) + '. ' + esc(q.q) + '</h3>';
+    if (q.type === 'what') { const kinds = new Set([q.answer]), all = ['wp', 'wn', 'wb', 'wr', 'wq', 'wk', 'bp', 'bn', 'bb', 'br', 'bq', 'bk', 'empty']; while (kinds.size < 4) kinds.add(all[Math.floor(Math.random() * all.length)]); z.choices = z.choices && z.choices.q === q ? z.choices : { q, list: [...kinds].sort() };
+      h += '<div class="opts words">' + z.choices.list.map(k => '<button data-act="vizPick" data-v="' + k + '">' + A.pieceLabel(k) + '</button>').join('') + '</div>'; }
+    else h += '<p class="muted">Tap the square on the empty board.</p>';
+  } else {
+    const all = z.ok.every(r => r.ok);
+    h += '<h3>' + (all ? 'All right' : z.ok.filter(r => r.ok).length + ' of ' + z.ok.length + ' right') + '</h3><div class="seqtxt">' + esc(seq) + '</div>' +
+      z.ok.map(r => '<p>' + (r.ok ? '✓ ' : '✗ ') + esc(r.q.q.replace(' Tap it.', '')) + ' <b>' + (r.q.type === 'tap' ? r.q.answer : A.pieceLabel(r.q.answer)) + '</b>' + (r.ok ? '' : ' (you said ' + esc(r.q.type === 'tap' ? r.got : A.pieceLabel(r.got)) + ')') + '</p>').join('') +
+      '<p class="muted">Now at level ' + o.lvl + '. The board shows the final position.</p><div class="row"><button class="btn" data-act="acViz">Next</button><button class="btn ghost" data-act="vizReplay">Step through the moves</button></div>';
+  }
+  return h + '</div><div class="row"><button class="link" data-act="trStop">Stop</button></div>';
+}
+
+/* notation: name squares, tap squares, play a written move, write a played move */
+function startNota() {
+  engines();
+  const o = S.ac.nota, k = A.notaKind(o.lvl);
+  const z = newSession('nota', 'w');
+  z.kind = k.kind; z.nocoord = k.nocoord; z.state = 'ask'; z.marks = null; z.tap = false; z.busy = false;
+  S.flipped = k.black;
+  if (k.kind === 'name' || k.kind === 'tap') {
+    z.c = new Chess(); z.blind = true; z.sq = A.randSquare(); // an empty board: only the squares matter
+    if (k.kind === 'name') { z.marks = { [z.sq]: 'ask' }; z.opts = A.squareOptions(z.sq); } else z.tap = true;
+  } else {
+    const it = A.vizItem(S.games.filter(g => !g.v960 && g.pgn), 1), c = new Chess(it.start);
+    const ms = c.moves({ verbose: true }), real = it.seq[0], interesting = ms.filter(m => m.captured || m.san.length > 3 || m.flags.includes('k') || m.flags.includes('q'));
+    const m = Math.random() < 0.5 && real ? ms.find(x => x.san === real.san) || ms[0] : (interesting.length ? interesting : ms)[Math.floor(Math.random() * (interesting.length || ms.length))];
+    z.c = c; z.color = c.turn(); z.m = m; S.flipped = k.black ? true : c.turn() === 'b' && Math.random() < 0.5;
+    if (k.kind === 'write') { z.arrow = { from: m.from, to: m.to }; z.opts = A.sanOptions(m, it.start); z.busy = true; }
+  }
+  render();
+}
+function notaDone(z, ok, got) {
+  z.state = 'done'; z.okAns = ok; z.got = got; z.tap = false;
+  acLevel(S.ac.nota, ok, 4); const d = acDay(); d.nota = (d.nota || 0) + 1; acSave();
+  render();
+  if (ok) setTimeout(() => { if (S.train === z) startNota(); }, 900);
+}
+function notaMove(z, from, to, promo) {
+  if (z.state !== 'ask') return;
+  const ok = from === z.m.from && to === z.m.to;
+  let san = from + '-' + to;
+  try { const m = new Chess(z.c.fen()).move({ from, to, promotion: promo }); san = m.san; } catch (e) { renderBoard(); return; }
+  try { z.c.move({ from: z.m.from, to: z.m.to, promotion: z.m.promotion }); z.last = [z.m.from, z.m.to]; } catch (e) { /* keep it */ }
+  if (!ok) z.marks = { [from]: 'bad', [to]: 'bad' };
+  notaDone(z, ok, san);
+}
+function trainTap(sq) {
+  const z = S.train;
+  if (z.mode === 'viz' && z.state === 'q') return vizAnswer(z, sq);
+  if (z.mode === 'nota' && z.state === 'ask' && z.kind === 'tap') { const ok = sq === z.sq; z.marks = ok ? { [sq]: 'ok' } : { [sq]: 'bad', [z.sq]: 'ok' }; notaDone(z, ok, sq); }
+}
+function notaHTML() {
+  const z = S.train, o = S.ac.nota, side = z.c.turn() === 'w' ? 'White' : 'Black';
+  let h = '<div class="card pz ' + (z.state === 'done' ? (z.okAns ? 'right' : 'wrong') : '') + '"><div class="lbl">Notation · level ' + o.lvl + (S.flipped ? ' · Black’s view' : '') + (z.nocoord ? ' · no coordinates' : '') + '</div>';
+  const q = z.kind === 'name' ? 'Which square is highlighted?' : z.kind === 'tap' ? 'Tap ' + z.sq : z.kind === 'read' ? 'Play ' + z.m.san + ' (' + side + ' to move)' : 'The arrow shows ' + side + '’s move. How is it written?';
+  h += '<h3>' + esc(q) + '</h3>';
+  if (z.kind === 'name' || z.kind === 'write') h += '<div class="opts">' + z.opts.map(x => '<button data-act="notaPick" data-v="' + esc(x) + '"' + (z.state === 'done' ? ' disabled class="' + (x === (z.kind === 'name' ? z.sq : z.m.san) ? 'ok' : x === z.got ? 'bad' : '') + '"' : '') + '>' + esc(x) + '</button>').join('') + '</div>';
+  if (z.state === 'done') {
+    const right = z.kind === 'name' || z.kind === 'tap' ? z.sq : z.m.san;
+    h += '<p><b>' + (z.okAns ? 'Right.' : 'Not quite: it is ' + esc(right) + (z.kind === 'read' ? ', from ' + z.m.from + ' to ' + z.m.to : '') + '.') + '</b>' + (z.kind === 'write' || z.kind === 'read' ? ' ' + esc(sanWhy(z.m)) : '') + '</p>' +
+      (z.okAns ? '' : '<div class="row"><button class="btn" data-act="acNota">Next</button></div>');
+  }
+  return h + '</div><div class="row"><span class="muted">Level ' + o.lvl + ' · ' + (o.n ? o.right + ' of ' + o.n + ' right' : 'finding your level') + '</span><button class="link" data-act="trStop">Stop</button></div>';
+}
+function sanWhy(m) { // a short reading of the notation
+  const N = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
+  if (m.san.startsWith('O-O-O')) return 'O-O-O is castling queenside (the long side).';
+  if (m.san.startsWith('O-O')) return 'O-O is castling kingside (the short side).';
+  const bits = [m.piece === 'p' ? (m.captured ? 'A pawn capture starts with the file the pawn came from (' + m.from[0] + ')' : 'A pawn move is just the square') : 'The ' + N[m.piece] + ' is ' + m.san[0]];
+  if (m.captured) bits.push('x means it captures');
+  if (/^[NBRQK][a-h1-8]x?[a-h][1-8]/.test(m.san)) bits.push('the extra ' + m.san[1] + ' says which ' + N[m.piece] + ', since two could go there');
+  if (m.promotion) bits.push('=' + m.promotion.toUpperCase() + ' is what the pawn becomes');
+  if (m.san.endsWith('+')) bits.push('+ is check'); if (m.san.endsWith('#')) bits.push('# is checkmate');
+  return bits.join(', ') + '.';
+}
+
 /* ---------- head to head, and "explain this move" ---------- */
 
 function h2hHTML(meta) {
@@ -1310,7 +1495,7 @@ function openReportHTML() {
 let gist = null, syncTimer = null, remoteCache = null;
 function touchSync() { if (!S.sync.token) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 8000); }
 const madeOnly = () => { const o = {}; for (const k in S.puzzles) if (S.puzzles[k].made) o[k] = S.puzzles[k]; return o; }; // made-up puzzles stay on the device that made them
-const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, daily: S.daily, train: S.trainGames, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
+const localState = () => ({ ac: S.ac, user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, daily: S.daily, train: S.trainGames, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
 const betterRv = (x, y) => (x.depth || 0) > (y.depth || 0) || ((x.depth || 0) === (y.depth || 0) && (x.at || 0) > (y.at || 0));
 async function syncNow() {
   if (!S.sync.token || S.sync.busy) return;
@@ -1322,10 +1507,10 @@ async function syncNow() {
     // puzzle progress, repertoire and the rest: merge item by item, then store whichever side was behind
     const mine = localState(), merged = Y.mergeState(mine, remote['state.json']);
     if (!Y.same(merged, Y.mergeState(mine, null))) {
-      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.trainGames = merged.train; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._fit = null;
+      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.trainGames = merged.train; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S.ac = merged.ac; S._fit = null;
       if (merged.user.v && (merged.user.t > (S.settings.userT || 0) || !S.settings.user.trim())) { S.settings.user = merged.user.v; S.settings.userT = merged.user.t; sets.settings = S.settings; }
       for (const g of merged.pasted) { const i = S.games.findIndex(x => x.id === g.id); if (i < 0) S.games.push(g); else if ((g.edited || 0) > (S.games[i].edited || 0)) S.games[i] = g; }
-      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, trainGames: S.trainGames, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
+      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, trainGames: S.trainGames, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, ac: S.ac });
     }
     if (!Y.same(merged, Y.mergeState(remote['state.json'], null))) out['state.json'] = merged;
     // reviews: take the ones this device lacks, send the ones the others lack
@@ -1826,6 +2011,17 @@ document.addEventListener('click', async e => {
   else if (act === 'clearNotice') { S.notice = null; renderStatus(); }
   else if (act === 'cancel') { cancelBatch = true; if (bg) bg.stop(); }
   else if (act === 'clearError') { S.error = ''; renderStatus(); }
+  else if (act === 'acOpen') { S.acLesson = a.dataset.v; S.tr.sub = 'course'; S.tab = 'trainer'; renderPanel(); $('#panel').scrollTop = 0; }
+  else if (act === 'acBack') { S.acLesson = null; renderPanel(); }
+  else if (act === 'acDone') { const id = S.acLesson; if (S.ac.done[id]) delete S.ac.done[id]; else { S.ac.done[id] = Date.now(); acDay().les = (acDay().les || 0) + 1; } acSave(); renderPanel(); }
+  else if (act === 'acEx') acExercise(+a.dataset.v);
+  else if (act === 'acViz') { if (S.train && S.train.timer) clearTimeout(S.train.timer); startViz(); }
+  else if (act === 'acNota') startNota();
+  else if (act === 'acPz') { S.tab = 'puzzles'; render(); }
+  else if (act === 'vizReady') { const z = S.train; if (z && z.state === 'study') { clearTimeout(z.timer); vizBlind(z); } }
+  else if (act === 'vizPick') { const z = S.train; if (z && z.state === 'q') vizAnswer(z, a.dataset.v); }
+  else if (act === 'vizReplay') { const z = S.train; if (z) enterLine(z.it.start, z.it.seq.map(m => m.from + m.to + (m.promotion || '')), 'The moves you read', 1); }
+  else if (act === 'notaPick') { const z = S.train; if (z && z.state === 'ask') { const right = z.kind === 'name' ? z.sq : z.m.san; if (z.kind === 'write') { try { z.c.move(z.m.san); z.last = [z.m.from, z.m.to]; z.arrow = null; } catch (e) { /* keep */ } } notaDone(z, a.dataset.v === right, a.dataset.v); } }
   else if (act === 'goSettings') { S.tab = 'settings'; renderPanel(); }
   else if (act === 'gmore') { S.gmore = (S.gmore || 30) + 50; renderPanel(); }
   else if (act === 'paste') { $('#pasteBox').hidden = !$('#pasteBox').hidden; }
@@ -1993,7 +2189,8 @@ document.addEventListener('keydown', e => {
 (async function () {
   board = new Board($('#board'), {
     dests: sq => { try { return new Chess(shown().fen).moves({ square: sq, verbose: true }).map(m => m.to); } catch (e) { return []; } },
-    onMove: (from, to) => { if (S.line) return; if (S.puzzle) tryPuzzle(from, to); else if (S.train) trainMove(from, to); }
+    onMove: (from, to) => { if (S.line) return; if (S.puzzle) tryPuzzle(from, to); else if (S.train) trainMove(from, to); },
+    onTap: sq => { if (S.train && S.train.tap) trainTap(sq); }
   });
   let sx = 0, sy = 0;
   $('#board').addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
