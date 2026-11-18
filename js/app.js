@@ -397,7 +397,9 @@ function gamesHTML() {
     '<button class="btn ghost" data-act="paste">Paste a PGN</button><button class="btn ghost" data-act="addLink">Add a game by link</button></div>' +
     '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
     '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
-    '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
+    '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label></div>' +
+    '<div id="botFields" class="row" hidden><label class="grow">Bot’s name<input id="botName" placeholder="e.g. Martin" autocomplete="off"></label><label>Bot’s rating<input id="botElo" inputmode="numeric" placeholder="e.g. 250"></label>' +
+    '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
   const sync = '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
   if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
   const keys = Object.keys(GCAT).filter(k => cats[k]);
@@ -1327,10 +1329,33 @@ function weeklyHTML() {
 
 /* ---------- adding one game by its chess.com link ---------- */
 
+// Sets PGN header tags, replacing ones already there.
+function setHeaders(pgn, h) {
+  let s = pgn;
+  for (const k in h) { const line = '[' + k + ' "' + String(h[k]).replace(/"/g, "'") + '"]', re = new RegExp('^\\s*\\[' + k + '\\s+"[^"]*"\\]\\s*$', 'm'); s = re.test(s) ? s.replace(re, line) : line + '\n' + (/^\s*\[/.test(s) ? s : '\n' + s); }
+  return s;
+}
+// Shows the bot fields for a game against a computer, filled in from the pasted PGN where it says.
+function botPrefill(text) {
+  const box = $('#botFields');
+  if (!box) return;
+  box.hidden = $('#pasteKind').value !== 'computer';
+  if (box.hidden || !text) return;
+  const tag = k => (new RegExp('\\[' + k + ' "([^"]*)"\\]').exec(text) || [])[1] || '', me = S.settings.user.trim().toLowerCase();
+  const wMe = tag('White').toLowerCase() === me, bMe = tag('Black').toLowerCase() === me;
+  if (wMe || bMe) {
+    $('#pasteColor').value = wMe ? 'w' : 'b';
+    if (!$('#botName').value) $('#botName').value = tag(wMe ? 'Black' : 'White');
+    if (!$('#botElo').value && /^\d+$/.test(tag(wMe ? 'BlackElo' : 'WhiteElo'))) $('#botElo').value = tag(wMe ? 'BlackElo' : 'WhiteElo');
+    if (!$('#myElo').value && /^\d+$/.test(tag(wMe ? 'WhiteElo' : 'BlackElo'))) $('#myElo').value = tag(wMe ? 'WhiteElo' : 'BlackElo');
+  }
+  const d = /^(\d{4})\.(\d{2})\.(\d{2})$/.exec(tag('UTCDate') || tag('Date'));
+  if (d) $('#gameDate').value = d[1] + '-' + d[2] + '-' + d[3];
+}
 function addByLink(text) {
   if (/game\/computer\//.test(text || '')) { // chess.com does not publish games against its bots: they come in as a PGN
     S.error = 'chess.com does not share games against its computer bots, so they cannot be found by link. On chess.com, open the game, press Share, choose PGN and copy it, then paste it into “Paste a PGN” here and set Against to “A computer”.';
-    renderStatus(); const lb = $('#linkBox'), pb = $('#pasteBox'); if (lb) lb.hidden = true; if (pb) { pb.hidden = false; $('#pasteKind').value = 'computer'; $('#pgn').focus(); }
+    renderStatus(); const lb = $('#linkBox'), pb = $('#pasteBox'); if (lb) lb.hidden = true; if (pb) { pb.hidden = false; $('#pasteKind').value = 'computer'; botPrefill(''); $('#pgn').focus(); }
     return;
   }
   const m = /game\/(?:(live|daily)\/)?(\d+)/.exec(text || '') || /^\s*(\d{3,})\s*$/.exec(text || '');
@@ -1609,11 +1634,19 @@ document.addEventListener('click', async e => {
   else if (act === 'addLink') { $('#linkBox').hidden = !$('#linkBox').hidden; if (!$('#linkBox').hidden) $('#gameLink').focus(); }
   else if (act === 'addLinkGo') addByLink($('#gameLink').value);
   else if (act === 'pasteGo') {
-    const pgn = R.cleanPgn($('#pgn').value.trim()), color = $('#pasteColor').value;
+    let pgn = R.cleanPgn($('#pgn').value.trim()), color = $('#pasteColor').value;
     let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'No moves could be read from that. Paste the game’s PGN, or its move list, from chess.com.'; renderStatus(); return; }
-    const hd = game.headers, me = S.settings.user.trim().toLowerCase(), side = me && (hd.White || '').toLowerCase() === me ? 'w' : me && (hd.Black || '').toLowerCase() === me ? 'b' : color; // your own name in the PGN decides the colour
+    const bot = $('#pasteKind').value === 'computer';
+    if (bot) { // a game against a computer: your name on the side you picked, the bot's on the other, with the ratings and date you entered
+      const me = S.settings.user.trim() || 'You', bn = $('#botName').value.trim() || 'Computer', be = Math.round(+$('#botElo').value) || '', mine = Math.round(+$('#myElo').value) || '', d = $('#gameDate').value;
+      const w = color === 'w', h = { White: w ? me : bn, Black: w ? bn : me, WhiteElo: String(w ? mine : be), BlackElo: String(w ? be : mine) };
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) { h.Date = d.replace(/-/g, '.'); h.UTCDate = h.Date; }
+      pgn = setHeaders(pgn, h);
+      game = R.readGame(pgn);
+    }
+    const hd = game.headers, me = S.settings.user.trim().toLowerCase(), side = bot ? color : me && (hd.White || '').toLowerCase() === me ? 'w' : me && (hd.Black || '').toLowerCase() === me ? 'b' : color; // your own name in the PGN decides the colour
     const day = /^(\d{4})\.(\d{2})\.(\d{2})$/.exec(hd.UTCDate || hd.Date || ''), tm = /^(\d{2}):(\d{2})/.exec(hd.EndTime || hd.UTCTime || '');
-    const end = day ? Date.UTC(+day[1], +day[2] - 1, +day[3], tm ? +tm[1] : 12, tm ? +tm[2] : 0) : Date.now();
+    const end = day ? (tm ? Date.UTC(+day[1], +day[2] - 1, +day[3], +tm[1], +tm[2]) : new Date(+day[1], +day[2] - 1, +day[3], 12).getTime()) : Date.now();
     const meta = { id: 'p' + Date.now().toString(36), pasted: true, url: '', pgn, white: hd.White || 'White', black: hd.Black || 'Black', wr: hd.WhiteElo || '', br: hd.BlackElo || '', color: side,
       result: hd.Result === '1/2-1/2' ? 'draw' : (hd.Result === '1-0') === (side === 'w') ? 'win' : 'loss', opponent: side === 'w' ? hd.Black || 'Black' : hd.White || 'White', timeClass: '', end: Math.min(end, Date.now()), opening: game.v960 ? 'Chess960' : '',
       v960: !!game.v960, computer: $('#pasteKind').value === 'computer' };
@@ -1693,6 +1726,7 @@ document.addEventListener('change', e => {
     S.ccMsg = ''; saveCalib(id, o);
   }
   else if (t.id === 'depth') { S.settings.depth = t.value; saveSettings(); }
+  else if (t.id === 'pasteKind') botPrefill($('#pgn').value);
   else if (t.id === 'autoOn') { S.settings.auto = t.checked; saveSettings(); }
   else if (t.id === 'botSide' || t.id === 'botLvl') { (S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }))[t.id === 'botSide' ? 'side' : 'lvl'] = t.value; }
   else if (t.id === 'goalRating' || t.id === 'goalPz' || t.id === 'goalRv') {
@@ -1705,7 +1739,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'trTc') { S.tr.tc = t.value; renderPanel(); }
   if (t.tagName === 'SELECT' || t.type === 'checkbox') t.blur(); // so the arrow keys go back to stepping through moves
 });
-document.addEventListener('input', e => { if (e.target.id === 'pgn' && $('#pasteKind')) { const ev = (/\[Event "([^"]*)"\]/.exec(e.target.value) || [])[1] || ''; if (/computer|bot/i.test(ev)) $('#pasteKind').value = 'computer'; } if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
+document.addEventListener('input', e => { if (e.target.id === 'pgn' && $('#pasteKind')) { const ev = (/\[Event "([^"]*)"\]/.exec(e.target.value) || [])[1] || ''; if (/computer|bot/i.test(ev)) $('#pasteKind').value = 'computer'; botPrefill(e.target.value); } if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'gameLink') addByLink(e.target.value); else if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Blunder Lab: chess game review",
   "short_name": "Blunder Lab",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Reviews your chess.com games with Stockfish: move ratings, puzzles from your own mistakes, an opening trainer and a rating forecast.",
   "permissions": ["storage", "unlimitedStorage", "alarms"],
   "host_permissions": ["https://api.chess.com/*", "https://api.github.com/*", "https://gist.githubusercontent.com/*"],
