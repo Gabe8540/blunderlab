@@ -27,10 +27,10 @@ B. MAKE THE SYNC TOKEN (on your computer)
    The token can only read and write your gists, nothing else on your account.
 
 C. TURN ON SYNC ON EVERY DEVICE
-- PC and laptop: open Blunder Lab (the extension), Games tab, scroll to
+- PC and laptop: open Blunder Lab (the extension), Settings (the gear), find
   "Sync between devices", paste the token, press "Turn on sync".
-- iPhone and iPad: open the address from step A6 in Safari, do the same on the Games
-  tab. Then press Share and "Add to Home Screen" to get an app icon.
+- iPhone and iPad: open the address from step A6 in Safari, do the same in Settings
+  (the gear in the bottom bar). Then press Share and "Add to Home Screen" to get an app icon.
 The first device uploads what it has. Every other device downloads it. From then on
 each one syncs by itself a few seconds after anything changes, and every few minutes.
 

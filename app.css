@@ -309,3 +309,79 @@ input.ccin{width:64px;padding:4px 6px;text-align:center;font-size:13px}
 p.small{font-size:12px;margin:6px 0 0}
 @media (pointer:coarse){.chip{padding:7px 12px;font-size:13.5px}}
 
+
+/* 2.0: a cleaner look, a bottom tab bar on phones, folding sections */
+:root{--surface2:#F7F9FB;--shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.08);--radius:14px}
+@media (prefers-color-scheme:dark){:root{--bg:#0E1115;--surface:#161A20;--surface2:#1C2128;--line:#262D36;--ink:#E9EDF1;--muted:#8E9AA7;--shadow:none}}
+body{font-size:15px;letter-spacing:.005em}
+.card,.comment,.lrow,.stats div,.grate>div,.lines{border-radius:var(--radius);box-shadow:var(--shadow)}
+.card{padding:14px 16px}
+.btn{border-radius:11px;transition:filter .12s,background .12s}
+.btn:hover{filter:brightness(1.08)}
+.btn.ghost{background:var(--surface2)}
+.btn.ghost:hover{border-color:var(--accent)}
+.row.center{justify-content:center}
+.card.top .acts{margin-top:0}
+.card.top p{margin:0 0 6px}
+
+/* tabs: a pill bar on wide screens */
+header{gap:12px}
+.tabs{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:3px;gap:2px;box-shadow:var(--shadow)}
+.tabs button{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:9px;font-size:13.5px}
+.tabs button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-current=true]{background:var(--accent);color:var(--accent-ink)}
+.tabs button[data-tab=settings] span{display:none}
+@media (min-width:861px){header{flex-wrap:wrap}.tabs{margin-left:0;width:100%}.tabs button{flex:1;justify-content:center;padding:7px 4px}.tabs button[data-tab=settings]{flex:0 0 40px}.tabs button svg{display:none}.tabs button[data-tab=settings] svg{display:block}}
+
+/* section headings and folds */
+h3{font-size:12px;margin:18px 2px 8px;letter-spacing:.08em}
+details.fold{margin:0}
+details.fold>summary{list-style:none;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:12px 2px 8px;user-select:none}
+details.fold>summary::-webkit-details-marker,details.card>summary::-webkit-details-marker{display:none}
+details.fold>summary::after,details.card>summary::after{content:"";width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);margin-left:auto;flex:none;transition:transform .15s;opacity:.7}
+details[open].fold>summary::after,details[open].card>summary::after{transform:rotate(45deg)}
+details.fold>summary:hover{color:var(--ink)}
+details.fold:not([open]){border-bottom:1px solid var(--line)}
+details.card>summary{list-style:none;display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 0}
+details.card>summary::after{align-self:center}
+details.card:not([open])>summary{margin:-2px 0}
+
+/* games list */
+.games{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.game{padding:11px 12px}
+.game:last-child{border-bottom:0}
+.game:hover{background:var(--surface2)}
+.res{border-radius:8px;width:26px;height:26px}
+.pill{display:inline-block;font:700 12px system-ui;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:2px 9px}
+.seg button{border-radius:999px}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+
+/* review: the moves as a flowing list */
+.moves{display:flex;flex-wrap:wrap;align-items:center;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px;margin-bottom:10px;box-shadow:var(--shadow);font-size:14.5px}
+.moves .mn{padding:4px 2px 4px 6px;font-size:12.5px}
+.moves .mv{padding:4px 7px}
+.moves .mv:hover{background:var(--surface2)}
+.moves .mv .badge{min-width:16px;height:16px;font-size:10px}
+.comment{min-height:0}
+.ghead b{font-size:16px}
+.who{font-size:14.5px}
+
+/* phones: tabs at the bottom where the thumb is, nothing pinned at the top */
+@media (max-width:860px){
+  .app{padding:calc(10px + env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) calc(84px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
+  header{top:auto;bottom:0;border-top:1px solid var(--line);border-bottom:0;padding:4px max(4px,env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(4px,env(safe-area-inset-left));background:color-mix(in srgb,var(--surface) 88%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+  .brand{display:none}
+  .tabs{background:none;border:0;box-shadow:none;padding:0;justify-content:space-around;overflow:visible}
+  .tabs button{flex:1;flex-direction:column;gap:3px;padding:6px 0 4px;font-size:10.5px;font-weight:600;border-radius:10px;min-width:0}
+  .tabs button svg{width:23px;height:23px;display:block}
+  .tabs button span,.tabs button[data-tab=settings] span{display:block}
+  .tabs button[aria-current=true]{background:none;color:var(--accent)}
+  .moves{max-height:176px;overflow-y:auto;overscroll-behavior:contain}
+  .scrollx,.seg{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-left:-10px;margin-right:-10px;padding:0 10px}
+  .scrollx::-webkit-scrollbar,.seg::-webkit-scrollbar{display:none}
+  .seg button{flex:none;white-space:nowrap}
+  .card.top .acts .btn{flex:1 1 auto}
+  .lines{height:104px}
+}
+@media (pointer:coarse){.moves .mv{padding:7px 8px}}

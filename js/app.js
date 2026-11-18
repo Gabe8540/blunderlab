@@ -393,27 +393,34 @@ function gamesHTML() {
   S.games.forEach(g => { const k = gcat(g); cats[k] = (cats[k] || 0) + 1; });
   if (S.gcat && !cats[S.gcat]) S.gcat = '';
   const shown = S.games.filter(g => !S.gcat || gcat(g) === S.gcat), un = shown.filter(g => !S.reviews[g.id]);
-  let h = '<div class="card"><div class="row"><label class="grow">chess.com username<input id="user" value="' + esc(S.settings.user) + '" placeholder="your username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>' +
-    '<label>Depth<select id="depth">' + [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep (slow)']].map(o => '<option value="' + o[0] + '"' + (S.settings.depth === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label></div>' +
-    '<div class="row"><button class="btn" data-act="load">Load my games</button>' + (un.length ? '<button class="btn ghost" data-act="batch">Review all' + (S.gcat ? ' ' + GCAT[S.gcat].toLowerCase() : '') + ' (' + un.length + ')</button>' : '') +
-    '<button class="btn ghost" data-act="paste">Paste a PGN</button><button class="btn ghost" data-act="addLink">Add a game by link</button></div>' +
+  const userBox = '<label class="grow">chess.com username<input id="user" value="' + esc(S.settings.user) + '" placeholder="your username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>';
+  let h = '<div class="card top">' + (S.settings.user ? '' : '<p><b>Welcome.</b> Enter your chess.com username to load your games. Already use Blunder Lab on another device? <button class="link" data-act="goSettings">Set up sync</button> to bring everything over.</p><div class="row">' + userBox + '</div>') +
+    '<div class="row acts"><button class="btn" data-act="load">' + (S.games.length ? '↻ Update games' : 'Load my games') + '</button>' + (un.length ? '<button class="btn ghost" data-act="batch">Review all' + (S.gcat ? ' ' + GCAT[S.gcat].toLowerCase() : '') + ' (' + un.length + ')</button>' : '') +
+    '<button class="btn ghost" data-act="paste">＋ Paste PGN</button><button class="btn ghost" data-act="addLink">＋ Add by link</button></div>' +
     '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
-    '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
     '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label></div>' +
     '<div id="botFields" hidden><div class="row"><label class="grow">Bot’s name<input id="botName" list="botList" placeholder="e.g. Martin" autocomplete="off"></label><label>Bot’s rating<input id="botElo" inputmode="numeric" placeholder="e.g. 250"></label>' +
     '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div>' + botPickHTML('botName', 'botElo', 'myElo', 'gameDate') + '</div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
-  const sync = trainHTML() + '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
-  if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
+  if (!S.games.length) return h + '<p class="empty">No games loaded yet.' + (S.settings.user ? ' Press “Load my games”.' : '') + '</p>';
   const keys = Object.keys(GCAT).filter(k => cats[k]);
-  if (keys.length > 1) h += '<div class="seg chips gcats"><button data-act="gcat" data-v="" aria-pressed="' + !S.gcat + '">All <span class="muted">' + S.games.length + '</span></button>' + keys.map(k => '<button data-act="gcat" data-v="' + k + '" aria-pressed="' + (S.gcat === k) + '">' + GCAT[k] + ' <span class="muted">' + cats[k] + '</span></button>').join('') + '</div>';
-  h += '<div class="games">' + shown.map(g => {
+  if (keys.length > 1) h += '<div class="seg chips gcats scrollx"><button data-act="gcat" data-v="" aria-pressed="' + !S.gcat + '">All <span class="muted">' + S.games.length + '</span></button>' + keys.map(k => '<button data-act="gcat" data-v="' + k + '" aria-pressed="' + (S.gcat === k) + '">' + GCAT[k] + ' <span class="muted">' + cats[k] + '</span></button>').join('') + '</div>';
+  const lim = S.gmore || 30;
+  h += '<div class="games">' + shown.slice(0, lim).map(g => {
     const rv = S.reviews[g.id];
     return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span>' +
       '<span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent || '?') + ' <span class="muted">' + esc((g.color === 'w' ? g.br : g.wr) || '') + '</span>' + ccTag(g.id) + '</b>' +
       '<span class="muted">' + esc((g.v960 ? [GCAT[gcat(g)] + ' ' + tcLabel(g.pgn), when(g.end)] : [g.opening || 'Unknown opening', [g.bot || g.computer ? GCAT[gcat(g)] : g.timeClass, g.bot ? '' : tcLabel(g.pgn)].filter(Boolean).join(' '), when(g.end)]).filter(Boolean).join(' · ')) + '</span></span>' +
-      '<span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' + (gameRating(g, rv, g.color) ? '<i>' + gameRating(g, rv, g.color).rating + '</i>' : '') : '<span class="muted">Review</span>') + '</span></button>';
-  }).join('') + '</div>';
-  return h + sync;
+      '<span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' + (gameRating(g, rv, g.color) ? '<i>' + gameRating(g, rv, g.color).rating + '</i>' : '') : '<span class="pill">Review</span>') + '</span></button>';
+  }).join('') + '</div>' + (shown.length > lim ? '<div class="row center"><button class="btn ghost" data-act="gmore">Show more (' + (shown.length - lim) + ' left)</button></div>' : '');
+  return h;
+}
+/* Settings: who you are, how deep the engine looks, syncing devices and the hidden training games. */
+function settingsHTML() {
+  return '<h3>Account</h3><div class="card"><div class="row"><label class="grow">chess.com username<input id="user" value="' + esc(S.settings.user) + '" placeholder="your username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>' +
+    '<label>Review depth<select id="depth">' + [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep (slow)']].map(o => '<option value="' + o[0] + '"' + (S.settings.depth === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label></div>' +
+    '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
+    '<div class="row"><button class="btn ghost" data-act="load">↻ Load my games again</button></div></div>' +
+    '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>' + trainHTML();
 }
 
 // The level each side played at in this game. Worked out from the stored review, so old reviews get it too.
@@ -597,19 +604,19 @@ function reviewHTML() {
   let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + (meta.train ? ' <span class="cctag train">training game · hidden</span>' : '') + ccTag(meta.id) + (meta.pasted && S.editing !== meta.id ? ' <button class="link" data-act="edOpen">Edit details</button>' : '') + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + editHTML(meta) + h2hHTML(meta);
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
-  h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
-    '<details class="card sum"' + (S.sumOpen !== false ? ' open' : '') + '><summary>Move ratings <span class="muted">' + accOf(meta, rv, 'w') + '% vs ' + accOf(meta, rv, 'b') + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
+  h += commentHTML() + movesList() + gameRatingHTML() + graphHTML() + clockHTML() + ccHTML() +
+    '<details class="card sum"' + (S.sumOpen ? ' open' : '') + '><summary>Move ratings <span class="muted">' + accOf(meta, rv, 'w') + '% vs ' + accOf(meta, rv, 'b') + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
     R.CLASSES.filter(k => cw[k] || cb[k] || k !== 'forced').map(k => '<tr><td><div class="cls">' + badge(k) + '<span><b>' + R.LABEL[k] + '</b><span class="muted mean">' + esc(R.MEANING[k]) + '</span></span></div></td><td>' + cw[k] + '</td><td>' + cb[k] + '</td></tr>').join('') + '</table></details>';
-  return h + movesList();
+  return h;
 }
 function movesList() {
   const { game, rv } = S.cur;
   let h = '<div class="moves" id="moves">';
   for (let i = 0; i < game.plies.length; i += 2) {
-    h += '<span class="mn">' + (i / 2 + 1) + '</span>';
+    h += '<span class="mn">' + (i / 2 + 1) + '.</span>';
     for (const j of [i, i + 1]) {
       const p = game.plies[j];
-      h += p ? '<button class="mv' + (S.ply === j + 1 ? ' cur' : '') + '" data-ply="' + (j + 1) + '">' + esc(p.san) + (rv && !['best', 'excellent', 'good', 'book'].includes(rv.recs[j].cls) ? badge(rv.recs[j].cls) : rv && rv.recs[j].cls === 'best' ? '' : '') + '</button>' : '<span></span>';
+      if (p) h += '<button class="mv' + (S.ply === j + 1 ? ' cur' : '') + '" data-ply="' + (j + 1) + '">' + esc(p.san) + (rv && !['best', 'excellent', 'good', 'book'].includes(rv.recs[j].cls) ? badge(rv.recs[j].cls) : '') + '</button>';
     }
   }
   return h + '</div>';
@@ -769,10 +776,23 @@ async function nextPuzzle() {
   else { S.pzMsg = 'No ' + (theme ? '“' + R.THEMES[theme].toLowerCase() + '” ' : '') + 'puzzle turned up this time. Press Start to try again, or pick another type.'; render(); }
 }
 
-function insightsHTML() {
+/* Long pages read better folded: every section heading becomes a fold you can open, and the app remembers which
+   are open. The ones in OPEN start open. */
+function foldAll(html, page, open) {
+  const parts = html.split('<h3>');
+  return parts[0] + parts.slice(1).map(x => {
+    const i = x.indexOf('</h3>'), title = x.slice(0, i), body = x.slice(i + 5), k = page + ':' + title.replace(/<[^>]+>/g, '').replace(/\s*\(.*$/, '').trim();
+    const on = S.fold && k in S.fold ? S.fold[k] : open.some(o => k.endsWith(':' + o));
+    return '<details class="fold" data-k="' + esc(k) + '"' + (on ? ' open' : '') + '><summary>' + title + '</summary>' + body + '</details>';
+  }).join('');
+}
+function insightsHTML() { return foldAll(insightsBody(), 'ins', ['What your games say', 'This week', 'Rating', 'Goals']); }
+function insightsBody() {
   if (!S.games.length && !S.hist.length) return '<p class="empty">Load your games first.</p>';
   const I = R.insights(S.games, S.reviews), pct = (a, n) => (n ? Math.round(100 * a / n) : 0);
-  const H = T.historyInsights(S.hist), all = H.total.n ? H.total : I.total;
+  const hk = S.hist.length + ':' + (S.hist.length && S.hist[S.hist.length - 1].end) + ':' + S.hist.reduce((a, h) => a + (h.how !== undefined), 0) + ':' + new Date().toDateString();
+  if (!S._hi || S._hi.k !== hk) S._hi = { k: hk, H: T.historyInsights(S.hist) }; // the whole history: worked out once per change
+  const H = S._hi.H, all = H.total.n ? H.total : I.total;
   const accs = S.games.filter(g => S.reviews[g.id]).map(g => accOf(g, S.reviews[g.id], g.color)).filter(x => x != null);
   if (accs.length) I.accuracy = Math.round(accs.reduce((a, b) => a + b, 0) / accs.length * 10) / 10;
   const wld = o => '<span class="wld"><i class="w" style="flex:' + o.win + '"></i><i class="d" style="flex:' + o.draw + '"></i><i class="l" style="flex:' + o.loss + '"></i></span><span class="muted">' + o.win + 'W ' + o.draw + 'D ' + o.loss + 'L</span>';
@@ -822,10 +842,11 @@ function renderPanel() {
   document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-current', String(b.dataset.tab === S.tab)));
   document.body.dataset.view = (S.tab === 'review' && S.cur) || S.puzzle || S.train || S.line ? 'board' : 'list'; // small screens hide the board on list pages
   const p = $('#panel'), keep = p.scrollTop;
-  p.innerHTML = S.tab === 'games' ? gamesHTML() : S.tab === 'review' ? reviewHTML() : S.tab === 'puzzles' ? puzzlesHTML() : S.tab === 'trainer' ? trainerHTML() : insightsHTML();
+  p.innerHTML = S.tab === 'games' ? gamesHTML() : S.tab === 'review' ? reviewHTML() : S.tab === 'puzzles' ? puzzlesHTML() : S.tab === 'trainer' ? trainerHTML() : S.tab === 'settings' ? settingsHTML() : insightsHTML();
   p.scrollTop = keep;
-  const cur = p.querySelector('.mv.cur');
-  if (cur) { // keep the current move in view by scrolling the panel only, never the page
+  const cur = p.querySelector('.mv.cur'), box = p.querySelector('.moves');
+  if (cur && box && box.scrollHeight > box.clientHeight + 2) { const a = cur.offsetTop - box.offsetTop; if (a < box.scrollTop || a > box.scrollTop + box.clientHeight - 30) box.scrollTop = a - box.clientHeight / 2; }
+  else if (cur) { // keep the current move in view by scrolling the panel only, never the page
     const a = cur.getBoundingClientRect(), b = p.getBoundingClientRect();
     if (a.top < b.top) p.scrollTop -= b.top - a.top + 8; else if (a.bottom > b.bottom) p.scrollTop += a.bottom - b.bottom + 8;
   }
@@ -1458,7 +1479,7 @@ async function addTraining(meta) {
 function trainHTML() {
   const has = g => Object.keys(S.calib[g.id] || {}).some(k => k !== 't'), list = liveTrain().sort((a, b) => b.edited - a.edited), done = list.filter(has).length;
   const status = g => (has(g) ? '<span class="cctag">chess.com ✓</span>' : S.reviews[g.id] ? '<span class="muted">needs chess.com’s numbers</span>' : '<span class="muted">not reviewed yet</span>');
-  return '<h3>Training games</h3><div class="card"><p>Other players’ games, kept hidden from your lists, puzzles and stats. They only teach accuracy, game rating and move ratings to match chess.com. Review the game on chess.com, add it here, then paste chess.com’s numbers into “Match chess.com”. Players far above and below your rating teach it the most.</p>' +
+  return '<h3>Calibration: training games</h3><div class="card"><p>Other players’ games, kept hidden from your lists, puzzles and stats. They only teach accuracy, game rating and move ratings to match chess.com. Review the game on chess.com, add it here, then paste chess.com’s numbers into “Match chess.com”. Players far above and below your rating teach it the most.</p>' +
     '<div class="row"><label class="grow">chess.com game link<input id="tgLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><label>One player’s username<input id="tgUser" placeholder="from the game" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="tgAdd">Add</button></div>' +
     '<details class="help"><summary>Or paste a PGN</summary><textarea id="tgPgn" rows="4" placeholder="Paste the game’s PGN or move list"></textarea><div class="row"><button class="btn small" data-act="tgPaste">Add</button></div></details>' +
     (list.length ? '<p class="muted">' + list.length + ' training game' + (list.length === 1 ? '' : 's') + ', ' + done + ' with chess.com’s numbers.</p>' + list.map(g => '<div class="lrow"><div class="lmain"><b>' + esc(g.white) + ' <span class="muted">' + esc(g.wr || '') + '</span> vs ' + esc(g.black) + ' <span class="muted">' + esc(g.br || '') + '</span></b><span class="lnote">' + esc([g.v960 ? 'Chess960' : g.timeClass, when(g.end)].filter(Boolean).join(' · ')) + ' · ' + status(g) + '</span></div>' +
@@ -1799,12 +1820,14 @@ document.addEventListener('click', async e => {
   const a = t.closest('[data-act]'); if (!a) return;
   const act = a.dataset.act;
   if (act === 'load') { S.error = ''; S.busy = { text: 'Loading your games from chess.com', done: 0, total: 1 }; renderStatus(); let fresh = []; try { fresh = await syncGames('full'); } catch (err) { S.error = err.message; } S.busy = null; render(); fresh = fresh.filter(g => !S.reviews[g.id]); if (fresh.length && S.settings.auto !== false) reviewMany(fresh, true); }
-  else if (act === 'gcat') { S.gcat = a.dataset.v; renderPanel(); }
+  else if (act === 'gcat') { S.gmore = 0; S.gcat = a.dataset.v; renderPanel(); }
   else if (act === 'batch') { const list = S.games.filter(g => !S.reviews[g.id] && (!S.gcat || gcat(g) === S.gcat)); if (list.length && !S.busy) reviewMany(list); }
   else if (act === 'openNotice') { const m = S.games.find(g => g.id === S.notice.id); S.notice = null; if (m) openGame(m); else renderStatus(); }
   else if (act === 'clearNotice') { S.notice = null; renderStatus(); }
   else if (act === 'cancel') { cancelBatch = true; if (bg) bg.stop(); }
   else if (act === 'clearError') { S.error = ''; renderStatus(); }
+  else if (act === 'goSettings') { S.tab = 'settings'; renderPanel(); }
+  else if (act === 'gmore') { S.gmore = (S.gmore || 30) + 50; renderPanel(); }
   else if (act === 'paste') { $('#pasteBox').hidden = !$('#pasteBox').hidden; }
   else if (act === 'addLink') { $('#linkBox').hidden = !$('#linkBox').hidden; if (!$('#linkBox').hidden) $('#gameLink').focus(); }
   else if (act === 'addLinkGo') addByLink($('#gameLink').value);
@@ -1955,7 +1978,7 @@ document.addEventListener('input', e => {
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'gameLink') addByLink(e.target.value); else if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }
-document.addEventListener('toggle', e => { const c = e.target.classList; if (!c) return; if (c.contains('cc')) S.ccOpen = e.target.open; else if (c.contains('sum')) S.sumOpen = e.target.open; }, true);
+document.addEventListener('toggle', e => { const c = e.target.classList; if (!c) return; if (c.contains('cc')) S.ccOpen = e.target.open; else if (c.contains('sum')) S.sumOpen = e.target.open; else if (e.target.dataset.k) (S.fold || (S.fold = {}))[e.target.dataset.k] = e.target.open; }, true);
 document.addEventListener('keydown', e => {
   const el = e.target, typing = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'checkbox'); // only real typing keeps the arrow keys
   if (typing || e.metaKey || e.ctrlKey || e.altKey) return;

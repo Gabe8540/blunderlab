@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.11.1**
+**Current version: 2.0.0**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -57,7 +57,8 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Results by colour and opening, and where the big errors happen
 
 **Devices**
-- Layout adapts to phone, tablet and desktop
+- Layout adapts to phone, tablet and desktop: tabs along the bottom on phones, long pages fold into sections
+- Settings (the gear): username, review depth, sync between devices and calibration games
 - The web app works offline once it has been opened online
 - Reviews, puzzle progress, repertoire and settings sync between devices through a private GitHub gist
 
