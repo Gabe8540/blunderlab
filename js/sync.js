@@ -77,7 +77,7 @@ export function mergeState(a, b) {
   a = a || {}; b = b || {};
   const newer = (x, y) => ((x && x.t) || 0) >= ((y && y.t) || 0) ? x : y;
   const pasted = {};
-  for (const g of (a.pasted || []).concat(b.pasted || [])) pasted[g.id] = g;
+  for (const g of (a.pasted || []).concat(b.pasted || [])) { const o = pasted[g.id]; if (!o || (g.edited || 0) > (o.edited || 0)) pasted[g.id] = g; } // the last edit wins
   return {
     user: (u => (u && u.v ? u : [a.user, b.user].find(x => x && x.v) || { v: '', t: 0 }))(newer(a.user, b.user)), // an empty name never beats a real one
     puzzles: pickMap(a.puzzles, b.puzzles, (x, y) => (x.seen || 0) > (y.seen || 0) || ((x.seen || 0) === (y.seen || 0) && (x.due || 0) > (y.due || 0))),

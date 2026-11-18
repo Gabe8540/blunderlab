@@ -507,6 +507,40 @@ function ccHTML() {
   sum += F.n.cls >= 3 ? (F.k === 1 ? ' Move ratings already match chess.com’s counts.' : ' Move ratings are now ' + (F.k > 1 ? 'more forgiving' : 'stricter') + ' (bands ×' + F.k.toFixed(2) + ') to match chess.com’s counts.') : ' Move ratings start tuning once 3 sides have move counts (' + F.n.cls + ' so far).';
   return h + '<p class="muted">' + sum + '</p></details>';
 }
+/* Editing a game you pasted in or played here: which side you were, who the opponent was, both ratings and the date.
+   The PGN's own header tags are rewritten to match, so the review, game ratings and lists all use the new details. */
+function editHTML(meta) {
+  if (!meta.pasted || S.editing !== meta.id) return '';
+  const w = meta.color === 'w', mine = w ? meta.wr : meta.br, theirs = w ? meta.br : meta.wr, opt = (v, cur, l) => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + l + '</option>';
+  return '<div class="card edit"><h3 class="big">Game details</h3><div class="row"><label>I played<select id="edColor">' + opt('w', meta.color, 'White') + opt('b', meta.color, 'Black') + '</select></label>' +
+    '<label>Against<select id="edKind">' + opt('person', meta.computer || meta.bot ? 'computer' : 'person', 'A person') + opt('computer', meta.computer || meta.bot ? 'computer' : 'person', 'A computer') + '</select></label></div>' +
+    '<div class="row"><label class="grow">Opponent’s name<input id="edOpp" value="' + esc(meta.opponent || '') + '" autocomplete="off"></label><label>Their rating<input id="edOppElo" inputmode="numeric" value="' + esc(theirs || '') + '"></label></div>' +
+    '<div class="row"><label>My rating<input id="edMyElo" inputmode="numeric" value="' + esc(mine || '') + '"></label><label>Date played<input id="edDate" type="date" value="' + T.dayKey(meta.end || Date.now()) + '"></label></div>' +
+    '<div class="row"><button class="btn" data-act="edSave">Save</button><button class="btn ghost" data-act="edCancel">Cancel</button></div></div>';
+}
+async function saveEdit() {
+  const m = S.cur && S.cur.meta;
+  if (!m || !m.pasted) return;
+  const color = $('#edColor').value, w = color === 'w', was = m.color, me = S.settings.user.trim() || (was === 'w' ? m.white : m.black) || 'You';
+  const opp = $('#edOpp').value.trim() || 'Opponent', oe = Math.round(+$('#edOppElo').value) || '', mye = Math.round(+$('#edMyElo').value) || '', d = /^(\d{4})-(\d{2})-(\d{2})$/.exec($('#edDate').value);
+  const h = { White: w ? me : opp, Black: w ? opp : me, WhiteElo: String(w ? mye : oe), BlackElo: String(w ? oe : mye) };
+  if (d) { h.Date = d[1] + '.' + d[2] + '.' + d[3]; h.UTCDate = h.Date; m.end = new Date(+d[1], +d[2] - 1, +d[3], 12).getTime(); }
+  m.pgn = setHeaders(m.pgn, h);
+  const res = (/\[Result "([^"]+)"\]/.exec(m.pgn) || [])[1];
+  m.result = res === '1/2-1/2' ? 'draw' : res === '1-0' || res === '0-1' ? ((res === '1-0') === w ? 'win' : 'loss') : color !== was && m.result !== 'draw' ? (m.result === 'win' ? 'loss' : 'win') : m.result;
+  Object.assign(m, { white: h.White, black: h.Black, wr: w ? mye : oe, br: w ? oe : mye, color, opponent: opp, computer: !m.bot && $('#edKind').value === 'computer', edited: Date.now() });
+  const sets = { games: S.games };
+  try { S.cur.game = R.readGame(m.pgn); } catch (e) { /* the moves did not change */ }
+  const rv = S.reviews[m.id];
+  if (color !== was && rv) { // the puzzles were made from the other side's mistakes
+    for (const id in S.puzzles) if (S.puzzles[id].game === m.id) delete S.puzzles[id];
+    for (const p of R.makePuzzles(S.cur.game, rv.recs, rv.evals, color, m)) { p.e = R.expPts(rv.evals[p.ply].lines[0]); S.puzzles[p.id] = p; }
+    sets.puzzles = S.puzzles;
+  }
+  S.games.sort((a, b) => b.end - a.end); S.editing = ''; S._fit = null; endCache.delete(m.id);
+  S.flipped = color === 'b';
+  await store.set(sets); touchSync(); render();
+}
 function gameRatingHTML() {
   const { meta, rv } = S.cur, w = gameRating(meta, rv, 'w'), b = gameRating(meta, rv, 'b');
   if (!w && !b) return '';
@@ -541,7 +575,7 @@ function commentHTML() {
 function reviewHTML() {
   if (!S.cur) return '<p class="empty">Pick a game from the Games tab to review it.</p>';
   const { meta, game, rv } = S.cur;
-  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + ccTag(meta.id) + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + h2hHTML(meta);
+  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + ccTag(meta.id) + (meta.pasted && S.editing !== meta.id ? ' <button class="link" data-act="edOpen">Edit details</button>' : '') + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + editHTML(meta) + h2hHTML(meta);
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
   h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
@@ -1187,7 +1221,7 @@ async function syncNow() {
     if (!Y.same(merged, Y.mergeState(mine, null))) {
       S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._fit = null;
       if (merged.user.v && (merged.user.t > (S.settings.userT || 0) || !S.settings.user.trim())) { S.settings.user = merged.user.v; S.settings.userT = merged.user.t; sets.settings = S.settings; }
-      for (const g of merged.pasted) if (!S.games.some(x => x.id === g.id)) S.games.push(g);
+      for (const g of merged.pasted) { const i = S.games.findIndex(x => x.id === g.id); if (i < 0) S.games.push(g); else if ((g.edited || 0) > (S.games[i].edited || 0)) S.games[i] = g; }
       Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
     }
     if (!Y.same(merged, Y.mergeState(remote['state.json'], null))) out['state.json'] = merged;
@@ -1692,6 +1726,9 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'ccSwap' && S.cur) { const id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), sw = (a, b) => { const x = o[a]; o[a] = o[b]; o[b] = x; if (o[a] == null) delete o[a]; if (o[b] == null) delete o[b]; }; sw('aw', 'ab'); sw('w', 'b'); sw('cw', 'cb'); S.ccMsg = ''; saveCalib(id, o); }
   else if (act === 'ccClear' && S.cur) { S.ccMsg = ''; saveCalib(S.cur.meta.id, null); }
+  else if (act === 'edOpen') { S.editing = S.cur.meta.id; renderPanel(); }
+  else if (act === 'edCancel') { S.editing = ''; renderPanel(); }
+  else if (act === 'edSave') saveEdit();
   else if (act === 'explain') { S.explain = S.cur.meta.id + ':' + S.ply; renderPanel(); }
   else if (act === 'botStart') { const b = S.tr.bot || { side: 'r' }; startSpar(b.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : b.side, [], { bot: { elo: botElo() } }); }
   else if (act === 'botResign') { const z = S.train; if (z && !z.done && !z.busy) { z.resigned = true; endTrain(z); } }

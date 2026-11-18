@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.7.2**
+**Current version: 1.7.3**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -12,6 +12,7 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Games sorted into categories: rapid, blitz, bullet, daily and Chess960, each showing its time control (10 min, 3|2 and so on)
 - Chess960 games are reviewed too, with their own rating chart
 - Games against chess.com's computer bots can be pasted in, with the bot's name and rating, your rating and the date, and get their own category
+- Games you pasted in can be edited later: your side, the opponent, both ratings and the date
 - Pasting accepts a full PGN, a bare move list, or moves copied from a game page (piece symbols and move times are fine)
 - "Review all" for every game not yet reviewed
 - Add any game you played by pasting its chess.com link, however old it is

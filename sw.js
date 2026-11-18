@@ -1,6 +1,6 @@
 // Blunder Lab web app: keeps a copy of the app's own files so it opens and runs with no connection.
 // The network is tried first, so a new version shows up as soon as you are online; the copy is the fallback.
-const CACHE = 'blunderlab-1.7.2';
+const CACHE = 'blunderlab-1.7.3';
 const FILES = ['./', 'index.html', 'app.css', 'site.webmanifest', 'js/app.js', 'js/board.js', 'js/chess.js', 'js/courses.js', 'js/engine.js', 'js/platform.js', 'js/review.js', 'js/sync.js', 'js/trainer.js',
   'data/book.json', 'data/openings.json', 'engine/stockfish-19-lite-single.js', 'engine/stockfish-19-lite-single.wasm', 'icons/icon32.png', 'icons/icon180.png', 'icons/icon192.png']
   .concat(['w', 'b'].flatMap(c => ['K', 'Q', 'R', 'B', 'N', 'P'].map(p => 'pieces/' + c + p + '.svg')));
