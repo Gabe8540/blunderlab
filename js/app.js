@@ -884,10 +884,10 @@ function startSpar(color, sans, opt) {
   const z = newSession('spar', color);
   z.opt = opt = opt || {};
   if (opt.fen) { z.c = new Chess(opt.fen); const p = opt.fen.split(' '); z.from = (+p[5] - 1) * 2 + (p[1] === 'b' ? 1 : 0); }
-  z.tree = z.node = opt.fen || opt.bot ? null : opt.tree || T.buildTree(S.hist, color, S.tr.tc);
+  z.tree = z.node = opt.bot && opt.bot.me ? T.buildTree(S.hist, color === 'w' ? 'b' : 'w') : opt.fen || opt.bot ? null : opt.tree || T.buildTree(S.hist, color, S.tr.tc);
   try { for (const s of sans || []) pushMove(z, s); } catch (e) { /* a move that no longer fits: start from where it stopped */ }
   z.msg = opt.end || opt.bot ? 'Your move.' : z.sans.length ? 'Your move. Play on from here.' : 'Your move. Play your opening.';
-  z.opp = opt.bot ? 'Stockfish is set to about ' + opt.bot.elo + '. No hints and no take-backs. The game is reviewed when it ends.' : opt.end ? (opt.end.goal === 'win' ? 'You were winning here (' + opt.end.score + '). Convert it against Stockfish at full strength.' : 'This was level (' + opt.end.score + '). Hold the draw, or better, against Stockfish at full strength.') :
+  z.opp = opt.bot && opt.bot.me ? 'Your double plays your openings, then makes mistakes as often and as big as you do. No hints and no take-backs. The game is reviewed when it ends.' : opt.bot ? 'Stockfish is set to about ' + opt.bot.elo + '. No hints and no take-backs. The game is reviewed when it ends.' : opt.end ? (opt.end.goal === 'win' ? 'You were winning here (' + opt.end.score + '). Convert it against Stockfish at full strength.' : 'This was level (' + opt.end.score + '). Hold the draw, or better, against Stockfish at full strength.') :
     opt.who ? 'The replies are ' + opt.who + '’s own moves, as often as they played them.' : 'The replies come from your real opponents, as often as they played them.';
   render();
   if (z.c.turn() !== color) oppMove(z); else if (!opt.bot) z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
@@ -900,13 +900,14 @@ async function oppMove(z) {
   if (ks.length) {
     const tot = ks.reduce((a, k) => a + k.n, 0), k = T.sample(z.node, Math.random()), others = ks.filter(o => o.san !== k.san).slice(0, 3);
     mv = k.san;
-    note = (who ? who + ' played ' : 'Your opponents played ') + k.san + ' here in ' + k.n + ' of ' + tot + ' game' + (tot === 1 ? '' : 's') + ' (' + Math.round(100 * k.n / tot) + '%).' +
+    note = (z.opt.bot && z.opt.bot.me ? 'You played ' : who ? who + ' played ' : 'Your opponents played ') + k.san + ' here in ' + k.n + ' of ' + tot + ' game' + (tot === 1 ? '' : 's') + ' (' + Math.round(100 * k.n / tot) + '%).' +
       (others.length ? ' Also seen: ' + others.map(o => o.san + ' ' + Math.round(100 * o.n / tot) + '%').join(', ') + '.' : '');
     await sleep(500);
   } else {
     const first = !z.engine; z.engine = true;
     let r;
-    if (z.opt.strong) r = await live.analyse(z.c.fen(), { depth: 14, multipv: 1, movetime: 900 });
+    if (z.opt.bot && z.opt.bot.me) r = await meMove(z);
+    else if (z.opt.strong) r = await live.analyse(z.c.fen(), { depth: 14, multipv: 1, movetime: 900 });
     else {
       const elo = z.opt.bot ? z.opt.bot.elo : myElo();
       // far below Stockfish's weakest setting, an occasional careless move stands in for the errors a player of that rating makes
@@ -916,12 +917,12 @@ async function oppMove(z) {
     }
     if (!r.best || r.best === '(none)') return endTrain(z);
     mv = { from: r.best.slice(0, 2), to: r.best.slice(2, 4), promotion: r.best.slice(4, 5) || undefined };
-    note = z.opt.strong || z.opt.bot ? '@' : first ? (who ? 'No game of ' + who + '’s reaches this position' : 'None of your games reach this position') + ', so Stockfish plays from here, turned down to roughly your level.' : '@';
+    note = z.opt.bot && z.opt.bot.me ? (first ? 'Out of your openings now: from here it errs like you do.' : '@') : z.opt.strong || z.opt.bot ? '@' : first ? (who ? 'No game of ' + who + '’s reaches this position' : 'None of your games reach this position') + ', so Stockfish plays from here, turned down to roughly your level.' : '@';
   }
   if (S.train !== z) return;
   let m;
   try { m = pushMove(z, mv); } catch (e) { return endTrain(z); }
-  z.opp = note === '@' ? 'Stockfish replies ' + m.san + '.' : note;
+  z.opp = note === '@' ? (z.opt.bot && z.opt.bot.me ? 'Your double plays ' : 'Stockfish replies ') + m.san + '.' : note;
   if (z.c.isGameOver()) return endTrain(z);
   z.busy = false; z.msg = 'Your move.';
   if (!z.opt.bot) z.pre = { fen: z.c.fen(), p: quick(z.c.fen()) };
@@ -1032,7 +1033,7 @@ function trainSessionHTML() {
   if (S.train.mode === 'drill') return drillHTML();
   const z = S.train, side = z.color === 'w' ? 'White' : 'Black', spar = z.mode === 'spar';
   const tone = !z.fb ? '' : ['best', 'good'].includes(z.fb.cls) ? 'right' : z.fb.cls === 'inaccuracy' ? 'shown' : 'wrong';
-  let h = '<div class="card pz ' + tone + '"><div class="lbl">' + (spar ? (z.opt.bot ? 'Game against Stockfish ' + z.opt.bot.elo : z.opt.end ? 'Endgame practice' : z.opt.who ? 'Playing ' + esc(z.opt.who) : 'Playing your opponents') : z.mode === 'learn' ? 'Learning the line' : 'Testing the line') + ' · you are ' + side + '</div>' +
+  let h = '<div class="card pz ' + tone + '"><div class="lbl">' + (spar ? (z.opt.bot ? (z.opt.bot.me ? 'Game against your double' : 'Game against Stockfish ' + z.opt.bot.elo) : z.opt.end ? 'Endgame practice' : z.opt.who ? 'Playing ' + esc(z.opt.who) : 'Playing your opponents') : z.mode === 'learn' ? 'Learning the line' : 'Testing the line') + ' · you are ' + side + '</div>' +
     '<h3>' + esc(spar ? (z.opt.end ? (z.opt.end.goal === 'win' ? 'Win this position' : 'Hold this position') : z.opening || 'Starting position') : z.name) + '</h3>' + (!spar && z.opening ? '<p class="muted">You are now in: ' + esc(z.opening) + '</p>' : '') +
     '<p class="trmoves">' + (z.sans.length ? esc(T.movesText(z.sans, z.from || 0)) : '<span class="muted">No moves yet.</span>') + '</p>' +
     (z.fb ? '<p class="fb">' + badge(z.fb.cls) + '<span>' + esc(z.fb.text) + '</span></p>' : '') + (z.opp ? '<p>' + esc(z.opp) + '</p>' : '') + '<p><b>' + esc(z.msg) + '</b></p><div class="row">';
@@ -1115,19 +1116,55 @@ function weakEngine(elo) { // Stockfish held back to about this rating
   }
   return sparE;
 }
+/* The bot that plays like you. Openings: your own moves from your game history, as often as you played them.
+   After that: every move is scored by Stockfish, a size of error is drawn from the errors you really made in that
+   phase of the game (reviewed games), and the move whose cost is closest to it is played. So it blunders as often,
+   and as badly, as you do, and plays well where you play well. */
+let meE = null, meProf = null;
+function meProfile() {
+  const key = Object.keys(S.reviews).length + ':' + S.games.length;
+  if (meProf && meProf.key === key) return meProf;
+  const P = { opening: [], middlegame: [], endgame: [] }; let games = 0;
+  for (const g of S.games) {
+    const rv = S.reviews[g.id];
+    if (!rv || !rv.colors || g.bot || g.train) continue;
+    games++;
+    rv.recs.forEach((r, i) => { if (rv.colors[i] === g.color && r.cls !== 'book' && r.cls !== 'forced' && P[r.phase]) P[r.phase].push(r.loss || 0); });
+  }
+  const all = P.opening.concat(P.middlegame, P.endgame), rate = (a, lo) => (a.length ? a.filter(x => x >= lo).length / a.length : 0);
+  return meProf = { key, P, all, games, moves: all.length, blunder: rate(all, 0.2), mistake: rate(all, 0.1) - rate(all, 0.2), inacc: rate(all, 0.05) - rate(all, 0.1) };
+}
+function meProfileHTML() {
+  const p = meProfile(), book = S.hist.filter(h => h.mv).length, per = x => (100 * x).toFixed(1);
+  return '<p class="muted">Built from ' + book + ' games for its openings' + (p.games ? ' and ' + p.games + ' reviewed games (' + p.moves + ' moves) for its mistakes: per 100 moves about ' + per(p.blunder) + ' blunders, ' + per(p.mistake) + ' mistakes and ' + per(p.inacc) + ' inaccuracies, just like you.' : '. Review some games so it can copy your mistakes too; until then it plays like Stockfish held to your rating.') + ' The more games you review, the more it plays like you.</p>';
+}
+async function meMove(z) {
+  const p = meProfile(), fen = z.c.fen();
+  if (p.moves < 30) return weakEngine(z.opt.bot.elo).analyse(fen, { depth: 6, movetime: 800 });
+  if (!meE) meE = Engine.worker(ENGINE);
+  const n = z.c.moves().length, r = await meE.analyse(fen, { depth: 10, multipv: Math.min(n, 40), movetime: 2500 });
+  const lines = r.lines.filter(l => l.pv && l.pv.length);
+  if (!lines.length) return r;
+  const pool = p.P[R.phaseOf(fen, z.sans.length)], src = pool && pool.length >= 20 ? pool : p.all;
+  const want = src[Math.floor(Math.random() * src.length)], top = R.expPts(lines[0]);
+  let pick = lines[0], d = Infinity;
+  for (const l of lines) { const x = Math.abs(top - R.expPts(l) - want); if (x < d - 1e-9 || (Math.abs(x - d) < 1e-9 && Math.random() < 0.5)) { d = x; pick = l; } }
+  return { best: pick.pv[0], lines };
+}
 const botElo = () => Math.max(400, Math.min(3000, Math.round((myElo() + (S.tr.bot ? +S.tr.bot.lvl : 0)) / 50) * 50));
 function botHTML() {
   const b = S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }), me = myElo(), opt = (v, cur, label) => '<option value="' + v + '"' + (String(cur) === String(v) ? ' selected' : '') + '>' + label + '</option>';
   const past = S.games.filter(g => g.bot).slice(0, 8);
-  return '<div class="card"><p>A normal game from move one against Stockfish, held back to about your level. No hints and no take-backs. When it ends, the game is reviewed like any other and its mistakes become puzzles.</p>' +
+  return '<div class="card"><p>A normal game from move one against Stockfish, held back to about your level, or against your double: a bot that plays like you. No hints and no take-backs. When it ends, the game is reviewed like any other and its mistakes become puzzles.</p>' +
     '<div class="row"><label>I play<select id="botSide">' + opt('r', b.side, 'Random') + opt('w', b.side, 'White') + opt('b', b.side, 'Black') + '</select></label>' +
-    '<label>Opponent<select id="botLvl">' + [[-200, 'Easier'], [0, 'My level'], [200, 'Harder'], [400, 'Much harder']].map(x => opt(x[0], b.lvl, x[1] + ' (' + Math.max(400, Math.round((me + x[0]) / 50) * 50) + ')')).join('') + '</select></label></div>' +
+    '<label>Opponent<select id="botLvl">' + [[-200, 'Easier'], [0, 'My level'], [200, 'Harder'], [400, 'Much harder']].map(x => opt(x[0], b.lvl, x[1] + ' (' + Math.max(400, Math.round((me + x[0]) / 50) * 50) + ')')).join('') + opt('me', b.lvl, 'Plays like me') + '</select></label></div>' +
+    (b.lvl === 'me' ? meProfileHTML() : '') +
     '<div class="row"><button class="btn" data-act="botStart">Start the game</button></div></div>' +
     (past.length ? '<h3>Your games against it</h3><div class="games">' + past.map(g => { const rv = S.reviews[g.id]; return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span><span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent) + '</b><span class="muted">' + esc([g.opening || 'Unknown opening', when(g.end)].join(' · ')) + '</span></span><span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' : '<span class="muted">Review</span>') + '</span></button>'; }).join('') + '</div>' : '');
 }
 function finishBot(z, won, lost) {
   if (z.sans.length < 4 || z.botMeta) return; // nothing worth keeping
-  const elo = z.opt.bot.elo, me = S.settings.user.trim() || 'You', bot = 'Stockfish ' + elo, white = z.color === 'w';
+  const elo = z.opt.bot.elo, me = S.settings.user.trim() || 'You', bot = z.opt.bot.me ? 'My double' : 'Stockfish ' + elo, white = z.color === 'w';
   const res = won ? (white ? '1-0' : '0-1') : lost ? (white ? '0-1' : '1-0') : '1/2-1/2', mine = myElo();
   const pgn = '[Event "Blunder Lab game"]\n[White "' + (white ? me : bot) + '"]\n[Black "' + (white ? bot : me) + '"]\n[Result "' + res + '"]\n[WhiteElo "' + (white ? mine : elo) + '"]\n[BlackElo "' + (white ? elo : mine) + '"]\n\n' + T.movesText(z.sans) + ' ' + res + '\n';
   const meta = z.botMeta = { id: 'b' + Date.now().toString(36), pasted: true, bot: true, url: '', pgn, white: white ? me : bot, black: white ? bot : me, wr: white ? mine : elo, br: white ? elo : mine, color: z.color,
@@ -1863,7 +1900,7 @@ document.addEventListener('click', async e => {
   else if (act === 'edCancel') { S.editing = ''; renderPanel(); }
   else if (act === 'edSave') saveEdit();
   else if (act === 'explain') { S.explain = S.cur.meta.id + ':' + S.ply; renderPanel(); }
-  else if (act === 'botStart') { const b = S.tr.bot || { side: 'r' }; startSpar(b.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : b.side, [], { bot: { elo: botElo() } }); }
+  else if (act === 'botStart') { const b = S.tr.bot || { side: 'r' }; startSpar(b.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : b.side, [], { bot: b.lvl === 'me' ? { elo: myElo(), me: true } : { elo: botElo() } }); }
   else if (act === 'botResign') { const z = S.train; if (z && !z.done && !z.busy) { z.resigned = true; endTrain(z); } }
   else if (act === 'botReview') { const m = S.train && S.train.botMeta; if (m) openGame(m); }
   else if (act === 'drStart') { S.drillMsg = ''; startDrill(); }
@@ -1899,7 +1936,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'pasteKind') botPrefill($('#pgn').value);
   else if (t.id === 'edKind') { const p = $('#edPicks'); if (p) p.hidden = t.value !== 'computer'; }
   else if (t.id === 'autoOn') { S.settings.auto = t.checked; saveSettings(); }
-  else if (t.id === 'botSide' || t.id === 'botLvl') { (S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }))[t.id === 'botSide' ? 'side' : 'lvl'] = t.value; }
+  else if (t.id === 'botSide' || t.id === 'botLvl') { (S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }))[t.id === 'botSide' ? 'side' : 'lvl'] = t.value; if (t.id === 'botLvl') renderPanel(); }
   else if (t.id === 'goalRating' || t.id === 'goalPz' || t.id === 'goalRv') {
     const v = Math.max(0, Math.round(+t.value) || 0), k = t.id === 'goalRating' ? 'rating' : t.id === 'goalPz' ? 'pz' : 'rv';
     if (v) S.goals[k] = v; else delete S.goals[k];

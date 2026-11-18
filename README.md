@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.9.1**
+**Current version: 1.10.0**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -36,6 +36,7 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 **Trainer**
 - My opponents: play your opening against the moves your real opponents played
 - Play a game: a full game against Stockfish at your level, reviewed when it ends
+- Your double: a bot that plays like you, with your openings from your game history and mistakes as often and as big as yours from your reviewed games
 - Blunder check: quick-fire "is this move safe?" drill from your own games
 - Scout: look up any chess.com player's openings and weak lines, and play against their moves
 - Openings: starter main lines, the openings you play, and about 3,200 named openings to learn and test
