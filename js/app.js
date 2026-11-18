@@ -24,6 +24,7 @@ const S = {
   train: null,                       // a trainer session on the board
   tr: { sub: 'opp', color: 'w', tc: '', q: '', course: null }, opProg: {},
   rep: { t: 0, list: [] }, calib: {}, endProg: {}, scout: null, pzTheme: '', pzMaking: null, pzMsg: '',
+  trainGames: [], // other players' games, hidden everywhere but the tuning (removed ones stay as { id, removed })
   goals: { t: 0 }, act: {}, explain: '', drillMsg: '', daily: { day: '', t: 0, list: [], res: {} },
   sync: { token: '', gist: '', last: 0, error: '', busy: false }
 };
@@ -38,6 +39,7 @@ async function loadAll() {
   S.puzzles = d.puzzles || {};
   S.hist = d.hist || []; S.histMonths = d.histMonths || []; S.histUser = d.histUser || ''; S.opProg = d.opProg || {};
   S.rep = d.rep || { t: 0, list: [] }; S.calib = d.calib || {}; S.endProg = d.endProg || {};
+  S.trainGames = d.trainGames || [];
   S.goals = d.goals || { t: 0 }; S.act = d.act || {}; if (d.daily && d.daily.list) S.daily = d.daily;
   if ((d.histV || 1) < 2) S.histMonths = []; // older records lack the opponent's name: read the months again once
   S.sync.token = d.syncToken || ''; S.sync.gist = d.syncGist || '';
@@ -218,7 +220,7 @@ async function review(meta, onStep) {
   S.reviews[meta.id] = rv;
   await store.set({ ['rv:' + meta.id]: rv });
   // puzzles from my own errors; keep progress on ones already practised
-  for (const p of R.makePuzzles(game, recs, evals, meta.color, meta)) {
+  if (!meta.train) for (const p of R.makePuzzles(game, recs, evals, meta.color, meta)) {
     p.e = R.expPts(evals[p.ply].lines[0]);
     const old = S.puzzles[p.id];
     S.puzzles[p.id] = old ? Object.assign(p, { box: old.box, due: old.due, seen: old.seen, right: old.right }) : p;
@@ -400,7 +402,7 @@ function gamesHTML() {
     '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label></div>' +
     '<div id="botFields" class="row" hidden><label class="grow">Bot’s name<input id="botName" placeholder="e.g. Martin" autocomplete="off"></label><label>Bot’s rating<input id="botElo" inputmode="numeric" placeholder="e.g. 250"></label>' +
     '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
-  const sync = '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
+  const sync = trainHTML() + '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
   if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
   const keys = Object.keys(GCAT).filter(k => cats[k]);
   if (keys.length > 1) h += '<div class="seg chips gcats"><button data-act="gcat" data-v="" aria-pressed="' + !S.gcat + '">All <span class="muted">' + S.games.length + '</span></button>' + keys.map(k => '<button data-act="gcat" data-v="' + k + '" aria-pressed="' + (S.gcat === k) + '">' + GCAT[k] + ' <span class="muted">' + cats[k] + '</span></button>').join('') + '</div>';
@@ -423,7 +425,7 @@ function ccFit() {
   if (S._fit) return S._fit;
   const accP = [], grP = [], cls = [];
   for (const id in S.calib) {
-    const o = S.calib[id], g = S.games.find(x => x.id === id), rv = S.reviews[id];
+    const o = S.calib[id], g = findGame(id), rv = S.reviews[id];
     if (!g || !rv) continue;
     for (const c of ['w', 'b']) {
       if (o['a' + c] && rv.acc[c] != null) accP.push([rv.acc[c], o['a' + c]]);
@@ -461,14 +463,14 @@ function gameRating(meta, rv, c) {
 async function applyBands() {
   const k = ccFit().k, sets = {};
   let added = false;
-  for (const g of S.games) {
+  for (const g of S.games.concat(liveTrain())) {
     const rv = S.reviews[g.id];
     if (!rv || ((rv.k || 1) === k && rv.bv === 2)) continue;
     let game;
     try { game = R.readGame(g.pgn); } catch (e) { continue; }
     if (rv.bv !== 2) { R.markLoses(game, rv.recs, rv.evals); rv.bv = 2; } // reviews from before the blunder rule: work out which big drops lost something
     R.reband(rv.recs, k); rv.k = k; sets['rv:' + g.id] = rv;
-    for (const p of R.makePuzzles(game, rv.recs, rv.evals, g.color, g)) if (!S.puzzles[p.id]) { p.e = R.expPts(rv.evals[p.ply].lines[0]); S.puzzles[p.id] = p; added = true; }
+    if (!g.train) for (const p of R.makePuzzles(game, rv.recs, rv.evals, g.color, g)) if (!S.puzzles[p.id]) { p.e = R.expPts(rv.evals[p.ply].lines[0]); S.puzzles[p.id] = p; added = true; }
   }
   if (added) sets.puzzles = S.puzzles;
   if (Object.keys(sets).length) { endCache.clear(); await store.set(sets); }
@@ -575,7 +577,7 @@ function commentHTML() {
 function reviewHTML() {
   if (!S.cur) return '<p class="empty">Pick a game from the Games tab to review it.</p>';
   const { meta, game, rv } = S.cur;
-  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + ccTag(meta.id) + (meta.pasted && S.editing !== meta.id ? ' <button class="link" data-act="edOpen">Edit details</button>' : '') + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + editHTML(meta) + h2hHTML(meta);
+  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + (meta.train ? ' <span class="cctag train">training game · hidden</span>' : '') + ccTag(meta.id) + (meta.pasted && S.editing !== meta.id ? ' <button class="link" data-act="edOpen">Edit details</button>' : '') + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + editHTML(meta) + h2hHTML(meta);
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
   h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
@@ -1162,7 +1164,7 @@ function drillHTML() {
 /* ---------- head to head, and "explain this move" ---------- */
 
 function h2hHTML(meta) {
-  if (meta.bot || meta.pasted) return '';
+  if (meta.bot || meta.pasted || meta.train) return '';
   const H = T.headToHead(S.hist, meta.opponent, meta.id);
   if (!H.n) return '';
   return '<details class="card sum h2h"><summary>You have played ' + esc(meta.opponent) + ' ' + H.n + ' time' + (H.n === 1 ? '' : 's') + ' before <span class="muted">' + H.w + 'W ' + H.d + 'D ' + H.l + 'L</span></summary>' +
@@ -1180,7 +1182,7 @@ function whyHTML() {
 
 function goalsHTML() {
   const g = S.goals, now = Date.now(), tc = S.eloTc, ser = tc ? T.ratingSeries(S.hist, tc) : [], cur = ser.length ? ser[ser.length - 1].r : 0;
-  const today = (S.act[T.dayKey(now)] || {}).pz || 0, wk = Object.values(S.reviews).filter(r => (r.at || 0) > now - 7 * 864e5).length, run = T.streak(S.act, 'pz', g.pz || 1, now);
+  const today = (S.act[T.dayKey(now)] || {}).pz || 0, wk = S.games.filter(x => S.reviews[x.id] && (S.reviews[x.id].at || 0) > now - 7 * 864e5).length, run = T.streak(S.act, 'pz', g.pz || 1, now);
   const row = (label, id, val, ph, pct, note) => '<div class="goal"><label>' + label + '<input id="' + id + '" inputmode="numeric" value="' + esc(val || '') + '" placeholder="' + ph + '"></label>' +
     '<div><span class="track"><i style="width:' + Math.round(100 * Math.max(0, Math.min(1, pct))) + '%"></i></span><span class="muted">' + note + '</span></div></div>';
   let rn = cur ? 'You are at ' + cur + ' (' + tc + '). Set a target.' : 'Set a target once your games are loaded.', rp = 0;
@@ -1207,7 +1209,7 @@ function openReportHTML() {
 let gist = null, syncTimer = null, remoteCache = null;
 function touchSync() { if (!S.sync.token) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, 8000); }
 const madeOnly = () => { const o = {}; for (const k in S.puzzles) if (S.puzzles[k].made) o[k] = S.puzzles[k]; return o; }; // made-up puzzles stay on the device that made them
-const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, daily: S.daily, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
+const localState = () => ({ user: { v: S.settings.user, t: S.settings.userT || 0 }, puzzles: (() => { const o = {}; for (const k in S.puzzles) if (!S.puzzles[k].made) o[k] = S.puzzles[k]; return o; })(), goals: S.goals, act: S.act, daily: S.daily, train: S.trainGames, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg, pasted: S.games.filter(g => g.pasted) });
 const betterRv = (x, y) => (x.depth || 0) > (y.depth || 0) || ((x.depth || 0) === (y.depth || 0) && (x.at || 0) > (y.at || 0));
 async function syncNow() {
   if (!S.sync.token || S.sync.busy) return;
@@ -1219,10 +1221,10 @@ async function syncNow() {
     // puzzle progress, repertoire and the rest: merge item by item, then store whichever side was behind
     const mine = localState(), merged = Y.mergeState(mine, remote['state.json']);
     if (!Y.same(merged, Y.mergeState(mine, null))) {
-      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._fit = null;
+      S.puzzles = Object.assign(madeOnly(), merged.puzzles); S.goals = merged.goals; S.act = merged.act; S.daily = merged.daily; S.trainGames = merged.train; S.opProg = merged.opProg; S.rep = merged.rep; S.calib = merged.calib; S.endProg = merged.endProg; S._fit = null;
       if (merged.user.v && (merged.user.t > (S.settings.userT || 0) || !S.settings.user.trim())) { S.settings.user = merged.user.v; S.settings.userT = merged.user.t; sets.settings = S.settings; }
       for (const g of merged.pasted) { const i = S.games.findIndex(x => x.id === g.id); if (i < 0) S.games.push(g); else if ((g.edited || 0) > (S.games[i].edited || 0)) S.games[i] = g; }
-      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
+      Object.assign(sets, { puzzles: S.puzzles, goals: S.goals, act: S.act, daily: S.daily, trainGames: S.trainGames, opProg: S.opProg, rep: S.rep, calib: S.calib, endProg: S.endProg });
     }
     if (!Y.same(merged, Y.mergeState(remote['state.json'], null))) out['state.json'] = merged;
     // reviews: take the ones this device lacks, send the ones the others lack
@@ -1233,10 +1235,10 @@ async function syncNow() {
         const inc = remote[name][id], cur = S.reviews[id];
         if (!inc || !inc.rv || (cur && !betterRv(inc.rv, cur))) continue;
         S.reviews[id] = inc.rv; sets['rv:' + id] = inc.rv; got++;
-        if (inc.g && !S.games.some(g => g.id === id)) S.games.push(inc.g);
+        if (inc.g && !inc.g.train && !S.games.some(g => g.id === id)) S.games.push(inc.g);
       }
     }
-    for (const g of S.games) {
+    for (const g of S.games.concat(liveTrain())) {
       const rv = S.reviews[g.id]; if (!rv) continue;
       const name = Y.monthKey(g.end), theirs = (remote[name] || {})[g.id];
       if (theirs && !betterRv(rv, theirs.rv)) continue;
@@ -1361,6 +1363,28 @@ function weeklyHTML() {
   return h + '</div>';
 }
 
+/* ---------- training games: other players' games that only tune the estimates ---------- */
+
+const liveTrain = () => S.trainGames.filter(g => !g.removed);
+const findGame = id => S.games.find(x => x.id === id) || liveTrain().find(x => x.id === id);
+async function addTraining(meta) {
+  Object.assign(meta, { train: true, edited: Date.now() });
+  const i = S.trainGames.findIndex(g => g.id === meta.id);
+  if (i >= 0) S.trainGames[i] = meta; else S.trainGames.push(meta);
+  await store.set({ trainGames: S.trainGames }); touchSync();
+  S.ccOpen = true; S.ccMsg = '';
+  openGame(meta);
+}
+function trainHTML() {
+  const has = g => Object.keys(S.calib[g.id] || {}).some(k => k !== 't'), list = liveTrain().sort((a, b) => b.edited - a.edited), done = list.filter(has).length;
+  const status = g => (has(g) ? '<span class="cctag">chess.com ✓</span>' : S.reviews[g.id] ? '<span class="muted">needs chess.com’s numbers</span>' : '<span class="muted">not reviewed yet</span>');
+  return '<h3>Training games</h3><div class="card"><p>Other players’ games, kept hidden from your lists, puzzles and stats. They only teach accuracy, game rating and move ratings to match chess.com. Review the game on chess.com, add it here, then paste chess.com’s numbers into “Match chess.com”. Players far above and below your rating teach it the most.</p>' +
+    '<div class="row"><label class="grow">chess.com game link<input id="tgLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><label>One player’s username<input id="tgUser" placeholder="from the game" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="tgAdd">Add</button></div>' +
+    '<details class="help"><summary>Or paste a PGN</summary><textarea id="tgPgn" rows="4" placeholder="Paste the game’s PGN or move list"></textarea><div class="row"><button class="btn small" data-act="tgPaste">Add</button></div></details>' +
+    (list.length ? '<p class="muted">' + list.length + ' training game' + (list.length === 1 ? '' : 's') + ', ' + done + ' with chess.com’s numbers.</p>' + list.map(g => '<div class="lrow"><div class="lmain"><b>' + esc(g.white) + ' <span class="muted">' + esc(g.wr || '') + '</span> vs ' + esc(g.black) + ' <span class="muted">' + esc(g.br || '') + '</span></b><span class="lnote">' + esc([g.v960 ? 'Chess960' : g.timeClass, when(g.end)].filter(Boolean).join(' · ')) + ' · ' + status(g) + '</span></div>' +
+      '<div class="lbtns"><button class="btn small ghost" data-act="tgOpen" data-id="' + esc(g.id) + '">Open</button><button class="link" data-act="tgDel" data-id="' + esc(g.id) + '">Remove</button></div></div>').join('') : '') + '</div>';
+}
+
 /* ---------- adding one game by its chess.com link ---------- */
 
 // Sets PGN header tags, replacing ones already there.
@@ -1398,11 +1422,12 @@ function addByLink(text) {
 }
 /* Finds one of your games on chess.com by its number, adds it to your list for good and opens it, which reviews it.
    Game numbers grow over time, so it homes in on the right month instead of reading every one. */
-async function addGameById(id, kind) {
-  const have = S.games.find(g => (g.url || '').endsWith('/' + id));
-  if (have) { if (!have.added) { have.added = true; store.set({ games: S.games }); } openGame(have); return; }
-  const user = S.settings.user.trim();
-  if (!user) { S.error = 'Enter your chess.com username on the Games tab first.'; renderStatus(); return; }
+async function addGameById(id, kind, opt) {
+  opt = opt || {};
+  const have = opt.train ? liveTrain().find(g => (g.url || '').endsWith('/' + id)) : S.games.find(g => (g.url || '').endsWith('/' + id));
+  if (have) { if (!opt.train && !have.added) { have.added = true; store.set({ games: S.games }); } S.ccOpen = !!opt.train || S.ccOpen; openGame(have); return; }
+  const user = (opt.user || S.settings.user).trim();
+  if (!user) { S.error = opt.train ? 'Enter the username of one of the two players.' : 'Enter your chess.com username on the Games tab first.'; renderStatus(); return; }
   if (S.busy) { S.error = 'Wait for the current job to finish, then add the game again.'; renderStatus(); return; }
   S.error = ''; S.busy = { text: 'Looking for game ' + id + ' on chess.com', done: 0, total: 1 }; renderStatus();
   let found = null;
@@ -1427,10 +1452,11 @@ async function addGameById(id, kind) {
     }
   } catch (e) { S.busy = null; S.error = e.message; renderStatus(); return; }
   S.busy = null;
-  if (!found) { S.error = 'Game ' + id + ' is not among ' + user + '’s games on chess.com. Check the link, or that it was played on this account.'; renderStatus(); return; }
+  if (!found) { S.error = 'Game ' + id + ' is not among ' + user + '’s games on chess.com. Check the link, and that ' + (opt.train ? user + ' played in it.' : 'it was played on this account.'); renderStatus(); return; }
   if (found.rules && found.rules !== 'chess' && found.rules !== 'chess960') { S.error = 'That game is a chess variant Blunder Lab cannot review (it handles standard chess and Chess960).'; renderStatus(); return; }
   const meta = toMeta(found, user);
   if (!meta) { S.error = 'That game could not be read.'; renderStatus(); return; }
+  if (opt.train) return addTraining(Object.assign(meta, { id: 't:' + meta.id, color: 'w' }));
   meta.added = true;
   if (!S.games.some(g => g.id === meta.id)) { S.games.push(meta); S.games.sort((a, b) => b.end - a.end); }
   await store.set({ games: S.games });
@@ -1726,6 +1752,32 @@ document.addEventListener('click', async e => {
   }
   else if (act === 'ccSwap' && S.cur) { const id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), sw = (a, b) => { const x = o[a]; o[a] = o[b]; o[b] = x; if (o[a] == null) delete o[a]; if (o[b] == null) delete o[b]; }; sw('aw', 'ab'); sw('w', 'b'); sw('cw', 'cb'); S.ccMsg = ''; saveCalib(id, o); }
   else if (act === 'ccClear' && S.cur) { S.ccMsg = ''; saveCalib(S.cur.meta.id, null); }
+  else if (act === 'tgAdd') {
+    const link = $('#tgLink').value, m = /game\/(?:(live|daily)\/)?(\d+)/.exec(link) || /^\s*(\d{3,})\s*$/.exec(link), u = ($('#tgUser').value || '').trim() || (/[?&]username=([^&#\s]+)/.exec(link) || [])[1] || '';
+    if (/game\/computer\//.test(link)) { S.error = 'chess.com does not share games against its bots. Use “Paste a PGN” below instead.'; renderStatus(); }
+    else if (!m) { S.error = 'That does not look like a chess.com game link.'; renderStatus(); }
+    else addGameById(m[2] || m[1], m[2] ? m[1] : '', { train: true, user: decodeURIComponent(u) });
+  }
+  else if (act === 'tgPaste') {
+    const pgn = R.cleanPgn($('#tgPgn').value.trim());
+    let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'No moves could be read from that.'; renderStatus(); return; }
+    const hd = game.headers, day = /^(\d{4})\.(\d{2})\.(\d{2})$/.exec(hd.UTCDate || hd.Date || ''), res = hd.Result;
+    let opening = game.v960 ? 'Chess960' : '';
+    if (!game.v960) for (const p of game.plies.slice(0, 40)) { const n = S.book.names[R.bookKey(p.after)]; if (n) opening = n; }
+    addTraining({ id: 't:p' + Date.now().toString(36), url: '', pgn, white: hd.White || 'White', black: hd.Black || 'Black', wr: hd.WhiteElo || '', br: hd.BlackElo || '', color: 'w',
+      result: res === '1/2-1/2' ? 'draw' : res === '1-0' ? 'win' : 'loss', opponent: hd.Black || 'Black', timeClass: '', end: day ? new Date(+day[1], +day[2] - 1, +day[3], 12).getTime() : Date.now(), opening, v960: !!game.v960 });
+  }
+  else if (act === 'tgOpen') { const g = findGame(a.dataset.id); if (g) { S.ccOpen = true; openGame(g); } }
+  else if (act === 'tgDel') {
+    const id = a.dataset.id, i = S.trainGames.findIndex(g => g.id === id);
+    if (i >= 0) {
+      S.trainGames[i] = { id, removed: true, edited: Date.now() }; delete S.reviews[id];
+      if (store.remove) store.remove('rv:' + id);
+      if (S.calib[id]) { S.calib[id] = { t: Date.now() }; store.set({ calib: S.calib }); } // an emptied entry, so the removal reaches the other devices too
+      S._fit = null; if (S.cur && S.cur.meta.id === id) S.cur = null;
+      await store.set({ trainGames: S.trainGames }); touchSync(); applyBands().then(() => renderPanel());
+    }
+  }
   else if (act === 'edOpen') { S.editing = S.cur.meta.id; renderPanel(); }
   else if (act === 'edCancel') { S.editing = ''; renderPanel(); }
   else if (act === 'edSave') saveEdit();

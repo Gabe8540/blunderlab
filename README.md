@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.7.3**
+**Current version: 1.8**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -18,6 +18,7 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Add any game you played by pasting its chess.com link, however old it is
 - Game rating for both players (the level each side played at)
 - Match chess.com: paste or type chess.com's accuracy, game rating and move counts for a game, and accuracy, game ratings and move ratings tune themselves to match chess.com across all your games; games with chess.com's numbers copied in are marked "chess.com ✓"
+- Training games: add other players' games with chess.com's numbers to tune the estimates further, kept hidden from everything else
 - "Explain this move": why the best move works and what yours allowed, in plain words
 - Head-to-head history when you have played the opponent before
 - Eval graph, clock graph (time spent on each move), best lines you can step through

@@ -85,6 +85,7 @@ export function mergeState(a, b) {
     rep: newer(a.rep, b.rep) || { t: 0, list: [] },
     calib: pickMap(a.calib, b.calib, (x, y) => (x.t || 0) > (y.t || 0)),
     endProg: pickMap(a.endProg, b.endProg, (x, y) => (x.n || 0) > (y.n || 0)),
+    train: (() => { const o = {}; for (const g of (a.train || []).concat(b.train || [])) { const x = o[g.id]; if (!x || (g.edited || 0) > (x.edited || 0)) o[g.id] = g; } return Object.values(o); })(), // training games, removals included
     goals: newer(a.goals, b.goals) || { t: 0 },
     daily: mergeDaily(a.daily, b.daily),
     act: (() => { const out = {}; for (const src of [a.act || {}, b.act || {}]) for (const day in src) { const o = out[day] || (out[day] = {}); for (const k in src[day]) o[k] = Math.max(o[k] || 0, src[day][k]); } return out; })(),
