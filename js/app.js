@@ -44,7 +44,6 @@ async function loadAll() {
   if ((d.histV || 1) < 3) S.histMonths = []; // older records lack the opponent's name or how the game ended: read the months again once
   S.sync.token = d.syncToken || ''; S.sync.gist = d.syncGist || '';
   if (!d.settings && touch) S.settings.depth = 'quick'; // phones and tablets start on the fast setting
-  document.body.dataset.pieces = S.settings.pieces || 'pixel';
   for (const k in d) if (k.startsWith('rv:')) S.reviews[k.slice(3)] = d[k];
   const raw = await (await fetch('data/book.json')).json();
   S.book = { names: raw.names, set: new Set(raw.more) };
@@ -395,8 +394,7 @@ function gamesHTML() {
   if (S.gcat && !cats[S.gcat]) S.gcat = '';
   const shown = S.games.filter(g => !S.gcat || gcat(g) === S.gcat), un = shown.filter(g => !S.reviews[g.id]);
   let h = '<div class="card"><div class="row"><label class="grow">chess.com username<input id="user" value="' + esc(S.settings.user) + '" placeholder="your username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>' +
-    '<label>Depth<select id="depth">' + [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep (slow)']].map(o => '<option value="' + o[0] + '"' + (S.settings.depth === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label>' +
-    '<label>Pieces<select id="pieceSet">' + [['pixel', 'Pixel'], ['classic', 'Classic']].map(o => '<option value="' + o[0] + '"' + ((S.settings.pieces || 'pixel') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label></div>' +
+    '<label>Depth<select id="depth">' + [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep (slow)']].map(o => '<option value="' + o[0] + '"' + (S.settings.depth === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label></div>' +
     '<div class="row"><button class="btn" data-act="load">Load my games</button>' + (un.length ? '<button class="btn ghost" data-act="batch">Review all' + (S.gcat ? ' ' + GCAT[S.gcat].toLowerCase() : '') + ' (' + un.length + ')</button>' : '') +
     '<button class="btn ghost" data-act="paste">Paste a PGN</button><button class="btn ghost" data-act="addLink">Add a game by link</button></div>' +
     '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
@@ -1935,7 +1933,6 @@ document.addEventListener('change', e => {
     S.ccMsg = ''; saveCalib(id, o);
   }
   else if (t.id === 'depth') { S.settings.depth = t.value; saveSettings(); }
-  else if (t.id === 'pieceSet') { S.settings.pieces = t.value; document.body.dataset.pieces = t.value; saveSettings(); }
   else if (t.id === 'pasteKind') botPrefill($('#pgn').value);
   else if (t.id === 'edKind') { const p = $('#edPicks'); if (p) p.hidden = t.value !== 'computer'; }
   else if (t.id === 'autoOn') { S.settings.auto = t.checked; saveSettings(); }
