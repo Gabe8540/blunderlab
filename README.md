@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.6**
+**Current version: 1.6.1**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -10,8 +10,9 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Stockfish rates every move: Brilliant, Great, Best, Excellent, Good, Book, Inaccuracy, Mistake, Miss, Blunder
 - New games are found and reviewed automatically when they finish
 - "Review all" for every game not yet reviewed
+- Add any game you played by pasting its chess.com link, however old it is
 - Game rating for both players (the level each side played at)
-- Match chess.com: paste or type chess.com's accuracy, game rating and move counts for a game, and accuracy, game ratings and move ratings tune themselves to match chess.com across all your games
+- Match chess.com: paste or type chess.com's accuracy, game rating and move counts for a game, and accuracy, game ratings and move ratings tune themselves to match chess.com across all your games; games with chess.com's numbers copied in are marked "chess.com ✓"
 - "Explain this move": why the best move works and what yours allowed, in plain words
 - Head-to-head history when you have played the opponent before
 - Eval graph, clock graph (time spent on each move), best lines you can step through

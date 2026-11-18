@@ -297,3 +297,4 @@ input.ccin{width:64px;padding:4px 6px;text-align:center;font-size:13px}
 .mean{display:block;font-size:12px;line-height:1.35}
 .riv td:nth-child(n+2),.riv th:nth-child(n+2){text-align:right;white-space:nowrap}
 .riv td:first-child{white-space:normal;word-break:break-word}
+.cctag{display:inline-block;margin-left:6px;padding:0 6px;border-radius:6px;font:700 10.5px/17px system-ui;color:var(--best);border:1px solid var(--best);vertical-align:1px;white-space:nowrap}

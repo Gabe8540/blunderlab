@@ -91,7 +91,7 @@ async function syncGames(mode) {
   if (!user) throw new Error('Enter your chess.com username first.');
   const base = 'https://api.chess.com/pub/player/' + encodeURIComponent(lower);
   const same = S.histUser === lower;
-  if (!same) { S.hist = []; S.histMonths = []; S.games = S.games.filter(g => g.pasted || S.reviews[g.id]); }
+  if (!same) { S.hist = []; S.histMonths = []; S.games = S.games.filter(g => g.pasted || g.added || S.reviews[g.id]); }
   const prevNewest = same ? S.games.reduce((a, g) => (g.pasted ? a : Math.max(a, g.end)), 0) : 0;
   let months, metaMonths, settled = [];
   if (mode === 'quick') {
@@ -120,7 +120,7 @@ async function syncGames(mode) {
   }
   S.hist.sort((a, b) => a.end - b.end);
   let room = 80;
-  S.games = S.games.concat(fresh).sort((a, b) => b.end - a.end).filter(g => g.pasted || S.reviews[g.id] || room-- > 0);
+  S.games = S.games.concat(fresh).sort((a, b) => b.end - a.end).filter(g => g.pasted || g.added || S.reviews[g.id] || room-- > 0);
   S.histUser = lower;
   const newest = S.games.reduce((a, g) => (g.pasted ? a : Math.max(a, g.end)), 0);
   await store.set(Object.assign({ games: S.games, hist: S.hist, histMonths: S.histMonths, histUser: lower, lastEnd: newest }, mode === 'quick' ? {} : { histV: 2 }));
@@ -371,7 +371,8 @@ function gamesHTML() {
   let h = '<div class="card"><div class="row"><label class="grow">chess.com username<input id="user" value="' + esc(S.settings.user) + '" placeholder="your username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>' +
     '<label>Depth<select id="depth">' + [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep (slow)']].map(o => '<option value="' + o[0] + '"' + (S.settings.depth === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label></div>' +
     '<div class="row"><button class="btn" data-act="load">Load my games</button>' + (un.length ? '<button class="btn ghost" data-act="batch">Review all (' + un.length + ')</button>' : '') +
-    '<button class="btn ghost" data-act="paste">Paste a PGN</button></div>' +
+    '<button class="btn ghost" data-act="paste">Paste a PGN</button><button class="btn ghost" data-act="addLink">Add a game by link</button></div>' +
+    '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
     '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
     '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
   const sync = '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
@@ -379,7 +380,7 @@ function gamesHTML() {
   h += '<div class="games">' + S.games.map(g => {
     const rv = S.reviews[g.id];
     return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span>' +
-      '<span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent || '?') + ' <span class="muted">' + esc((g.color === 'w' ? g.br : g.wr) || '') + '</span></b>' +
+      '<span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent || '?') + ' <span class="muted">' + esc((g.color === 'w' ? g.br : g.wr) || '') + '</span>' + ccTag(g.id) + '</b>' +
       '<span class="muted">' + esc([g.opening || 'Unknown opening', g.timeClass, when(g.end)].filter(Boolean).join(' · ')) + '</span></span>' +
       '<span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' + (gameRating(g, rv, g.color) ? '<i>' + gameRating(g, rv, g.color).rating + '</i>' : '') : '<span class="muted">Review</span>') + '</span></button>';
   }).join('') + '</div>';
@@ -451,6 +452,8 @@ function saveCalib(id, o) {
   S._fit = null; store.set({ calib: S.calib }); touchSync();
   applyBands().then(() => render());
 }
+// A small tag on games whose chess.com review numbers you copied in (Match chess.com).
+const ccTag = id => (Object.keys(S.calib[id] || {}).some(k => k !== 't') ? ' <span class="cctag" title="chess.com’s review numbers copied in for this game">chess.com ✓</span>' : '');
 function ccHTML() {
   const { meta, rv } = S.cur;
   if (meta.bot || !rv.colors) return '';
@@ -511,7 +514,7 @@ function commentHTML() {
 function reviewHTML() {
   if (!S.cur) return '<p class="empty">Pick a game from the Games tab to review it.</p>';
   const { meta, game, rv } = S.cur;
-  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + h2hHTML(meta);
+  let h = '<div class="ghead"><b>' + esc(meta.white) + ' vs ' + esc(meta.black) + ccTag(meta.id) + '</b><span class="muted">' + esc([game.headers.Result, meta.opening, meta.timeClass, when(meta.end)].filter(Boolean).join(' · ')) + '</span></div>' + h2hHTML(meta);
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
   h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
@@ -1297,6 +1300,55 @@ function weeklyHTML() {
   return h + '</div>';
 }
 
+/* ---------- adding one game by its chess.com link ---------- */
+
+function addByLink(text) {
+  const m = /game\/(?:(live|daily)\/)?(\d+)/.exec(text || '') || /^\s*(\d{3,})\s*$/.exec(text || '');
+  if (!m) { S.error = 'That does not look like a chess.com game link. It should look like chess.com/game/live/123456789.'; renderStatus(); return; }
+  addGameById(m[2] || m[1], m[2] ? m[1] : '');
+}
+/* Finds one of your games on chess.com by its number, adds it to your list for good and opens it, which reviews it.
+   Game numbers grow over time, so it homes in on the right month instead of reading every one. */
+async function addGameById(id, kind) {
+  const have = S.games.find(g => (g.url || '').endsWith('/' + id));
+  if (have) { if (!have.added) { have.added = true; store.set({ games: S.games }); } openGame(have); return; }
+  const user = S.settings.user.trim();
+  if (!user) { S.error = 'Enter your chess.com username on the Games tab first.'; renderStatus(); return; }
+  if (S.busy) { S.error = 'Wait for the current job to finish, then add the game again.'; renderStatus(); return; }
+  S.error = ''; S.busy = { text: 'Looking for game ' + id + ' on chess.com', done: 0, total: 1 }; renderStatus();
+  let found = null;
+  try {
+    const base = 'https://api.chess.com/pub/player/' + encodeURIComponent(user.toLowerCase()), all = (await getJSON(base + '/games/archives')).archives || [];
+    const num = g => +((/\/(\d+)$/.exec(g.url || '') || [])[1] || 0), tried = new Set();
+    const look = async i => {
+      tried.add(i); S.busy.done = tried.size; S.busy.total = Math.max(S.busy.total, Math.ceil(Math.log2(all.length + 1)) + 1); renderStatus();
+      const gs = ((await getJSON(all[i])).games || []);
+      return { f: gs.find(g => (g.url || '').endsWith('/' + id)), ids: gs.filter(g => !kind || (g.url || '').includes('/' + kind + '/')).map(num).filter(Boolean) };
+    };
+    let lo = 0, hi = all.length - 1;
+    while (lo <= hi && !found) {
+      const mid = (lo + hi) >> 1, r = await look(mid);
+      if (r.f) { found = r.f; break; }
+      if (!r.ids.length) break;
+      if (+id < Math.min.apply(null, r.ids)) hi = mid - 1; else if (+id > Math.max.apply(null, r.ids)) lo = mid + 1; else break;
+    }
+    for (let i = all.length - 1; i >= 0 && !found; i--) { // anything left: read month by month, newest first
+      if (tried.has(i)) continue;
+      S.busy.total = all.length; const r = await look(i); if (r.f) found = r.f;
+    }
+  } catch (e) { S.busy = null; S.error = e.message; renderStatus(); return; }
+  S.busy = null;
+  if (!found) { S.error = 'Game ' + id + ' is not among ' + user + '’s games on chess.com. Check the link, or that it was played on this account.'; renderStatus(); return; }
+  if (found.rules && found.rules !== 'chess') { S.error = 'That game is a chess variant, which Blunder Lab cannot review.'; renderStatus(); return; }
+  const meta = toMeta(found, user);
+  if (!meta) { S.error = 'That game could not be read.'; renderStatus(); return; }
+  meta.added = true;
+  if (!S.games.some(g => g.id === meta.id)) { S.games.push(meta); S.games.sort((a, b) => b.end - a.end); }
+  await store.set({ games: S.games });
+  const lb = $('#linkBox'); if (lb) lb.hidden = true;
+  openGame(S.games.find(g => g.id === meta.id));
+}
+
 /* ---------- opponents you have played more than once ---------- */
 
 function rivals() {
@@ -1523,6 +1575,8 @@ document.addEventListener('click', async e => {
   else if (act === 'cancel') { cancelBatch = true; if (bg) bg.stop(); }
   else if (act === 'clearError') { S.error = ''; renderStatus(); }
   else if (act === 'paste') { $('#pasteBox').hidden = !$('#pasteBox').hidden; }
+  else if (act === 'addLink') { $('#linkBox').hidden = !$('#linkBox').hidden; if (!$('#linkBox').hidden) $('#gameLink').focus(); }
+  else if (act === 'addLinkGo') addByLink($('#gameLink').value);
   else if (act === 'pasteGo') {
     const pgn = $('#pgn').value.trim(), color = $('#pasteColor').value;
     let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'That does not look like a PGN.'; renderStatus(); return; }
@@ -1618,7 +1672,7 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('input', e => { if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'gameLink') addByLink(e.target.value); else if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }
 document.addEventListener('toggle', e => { const c = e.target.classList; if (!c) return; if (c.contains('cc')) S.ccOpen = e.target.open; else if (c.contains('sum')) S.sumOpen = e.target.open; }, true);
 document.addEventListener('keydown', e => {
@@ -1663,5 +1717,5 @@ document.addEventListener('keydown', e => {
   setInterval(syncNow, 180000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { autoSync(); syncNow(); fillDaily(); } });
   if (isExt && chrome.runtime && chrome.runtime.onMessage) chrome.runtime.onMessage.addListener((msg, from, reply) => { if (msg && msg.type === 'blunderlab-ping') { reply({ open: true }); autoSync(); } });
-  if (want) { const m = S.games.find(g => g.url.endsWith('/' + want[1])); if (m) openGame(m); else { S.error = 'That game is not in your recent games. Load it from the Games tab or paste its PGN.'; renderStatus(); } }
+  if (want) addGameById(want[1]);
 })();
