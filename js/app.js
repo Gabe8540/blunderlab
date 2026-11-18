@@ -401,7 +401,7 @@ function gamesHTML() {
     '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
     '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label></div>' +
     '<div id="botFields" hidden><div class="row"><label class="grow">Bot’s name<input id="botName" list="botList" placeholder="e.g. Martin" autocomplete="off"></label><label>Bot’s rating<input id="botElo" inputmode="numeric" placeholder="e.g. 250"></label>' +
-    '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div>' + botPickHTML('botName', 'botElo', 'myElo') + '</div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
+    '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div>' + botPickHTML('botName', 'botElo', 'myElo', 'gameDate') + '</div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
   const sync = trainHTML() + '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
   if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
   const keys = Object.keys(GCAT).filter(k => cats[k]);
@@ -518,7 +518,7 @@ function editHTML(meta) {
     '<label>Against<select id="edKind">' + opt('person', meta.computer || meta.bot ? 'computer' : 'person', 'A person') + opt('computer', meta.computer || meta.bot ? 'computer' : 'person', 'A computer') + '</select></label></div>' +
     '<div class="row"><label class="grow">Opponent’s name<input id="edOpp" list="botList" value="' + esc(meta.opponent || '') + '" autocomplete="off"></label><label>Their rating<input id="edOppElo" inputmode="numeric" value="' + esc(theirs || '') + '"></label></div>' +
     '<div class="row"><label>My rating<input id="edMyElo" inputmode="numeric" value="' + esc(mine || '') + '"></label><label>Date played<input id="edDate" type="date" value="' + T.dayKey(meta.end || Date.now()) + '"></label></div>' +
-    '<div id="edPicks"' + (meta.computer || meta.bot ? '' : ' hidden') + '>' + botPickHTML('edOpp', 'edOppElo', 'edMyElo') + '</div>' +
+    '<div id="edPicks"' + (meta.computer || meta.bot ? '' : ' hidden') + '>' + botPickHTML('edOpp', 'edOppElo', 'edMyElo', 'edDate') + '</div>' +
     '<div class="row"><button class="btn" data-act="edSave">Save</button><button class="btn ghost" data-act="edCancel">Cancel</button></div></div>';
 }
 async function saveEdit() {
@@ -1404,11 +1404,22 @@ function myRatingChoices() {
   return out;
 }
 // Quick picks under the bot fields: bots (with their ratings) and your own current ratings, one tap to fill in.
-function botPickHTML(nameId, eloId, myId) {
+// Dates to pick from: today, yesterday and the days of your recent bot games.
+function dateChoices() {
+  const now = Date.now(), out = [{ v: T.dayKey(now), l: 'Today' }, { v: T.dayKey(now - 864e5), l: 'Yesterday' }];
+  for (const g of S.games) {
+    if (!g.computer || out.length >= 6) continue;
+    const v = T.dayKey(g.end);
+    if (!out.some(x => x.v === v)) out.push({ v, l: new Date(g.end).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) });
+  }
+  return out;
+}
+function botPickHTML(nameId, eloId, myId, dateId) {
   const bots = botChoices(), recent = bots.filter(b => b.used).slice(0, 6), chips = recent.length ? recent : bots.filter(b => ['Martin', 'Emir', 'Nelson', 'Antonio', 'Isabel'].includes(b.name)), mine = myRatingChoices();
   return '<datalist id="botList">' + bots.map(b => '<option value="' + esc(b.name) + '"' + (b.elo ? ' label="' + b.elo + '"' : '') + '></option>').join('') + '</datalist>' +
     '<div class="picks"><span class="muted">' + (recent.length ? 'Bots you have played:' : 'Common bots:') + '</span>' + chips.map(b => '<button class="chip" data-act="pickBot" data-n="' + esc(b.name) + '" data-e="' + (b.elo || '') + '" data-t="' + nameId + ',' + eloId + '">' + esc(b.name) + (b.elo ? ' <span class="muted">' + b.elo + '</span>' : '') + '</button>').join('') + '</div>' +
     (mine.length ? '<div class="picks"><span class="muted">My rating:</span>' + mine.map(m => '<button class="chip" data-act="pickMy" data-e="' + m.v + '" data-t="' + myId + '">' + m.v + ' <span class="muted">' + m.l + '</span></button>').join('') + '</div>' : '') +
+    '<div class="picks"><span class="muted">Date:</span>' + dateChoices().map(d => '<button class="chip" data-act="pickMy" data-e="' + d.v + '" data-t="' + dateId + '">' + esc(d.l) + '</button>').join('') + '</div>' +
     '<p class="muted small">Type any bot’s name for the full list. Ratings are the ones chess.com lists; change them if yours shows different.</p>';
 }
 // Sets PGN header tags, replacing ones already there.
