@@ -487,7 +487,7 @@ function ccHTML() {
   const { meta, rv } = S.cur;
   if (meta.bot || !rv.colors) return '';
   const o = S.calib[meta.id] || {}, F = ccFit(), has = Object.keys(o).some(k => k !== 't');
-  const mine = c => { const n = { inaccuracy: 0, mistake: 0, miss: 0, blunder: 0 }; rv.recs.forEach((r, i) => { if (rv.colors[i] === c && r.cls in n) n[r.cls]++; }); return n; };
+  const mine = c => { const n = { brilliant: 0, great: 0, best: 0, excellent: 0, good: 0, book: 0, inaccuracy: 0, mistake: 0, miss: 0, blunder: 0 }; rv.recs.forEach((r, i) => { if (rv.colors[i] === c && r.cls in n) n[r.cls]++; }); return n; };
   const cnt = { w: mine('w'), b: mine('b') }, cell = (key, v, ph) => '<td><input class="ccin" data-cc="' + key + '" inputmode="decimal" value="' + esc(v == null ? '' : v) + '" placeholder="' + ph + '"></td>';
   const row = (label, ours, theirs) => '<tr><td>' + label + '</td><td>' + (ours.w == null ? '–' : ours.w) + '</td>' + theirs.w + '<td>' + (ours.b == null ? '–' : ours.b) + '</td>' + theirs.b + '</tr>';
   const gw = ownRating(meta, rv, 'w'), gb = ownRating(meta, rv, 'b');
@@ -499,7 +499,7 @@ function ccHTML() {
     '<table class="cct"><tr><th></th><th colspan="2">' + esc(meta.white) + '</th><th colspan="2">' + esc(meta.black) + '</th></tr><tr><th></th><th>Ours</th><th>chess.com</th><th>Ours</th><th>chess.com</th></tr>' +
     row('Accuracy', { w: ownAcc(rv, 'w'), b: ownAcc(rv, 'b') }, { w: cell('aw', o.aw, '%'), b: cell('ab', o.ab, '%') }) +
     row('Game rating', { w: gw && gw.rating, b: gb && gb.rating }, { w: cell('w', o.w, ''), b: cell('b', o.b, '') }) +
-    [['inaccuracy', 'Inaccuracies'], ['mistake', 'Mistakes'], ['miss', 'Misses'], ['blunder', 'Blunders']].map(x => row(x[1], { w: cnt.w[x[0]], b: cnt.b[x[0]] }, { w: cell('cw.' + x[0], (o.cw || {})[x[0]], ''), b: cell('cb.' + x[0], (o.cb || {})[x[0]], '') })).join('') + '</table>';
+    [['brilliant', 'Brilliant'], ['great', 'Great'], ['best', 'Best'], ['excellent', 'Excellent'], ['good', 'Good'], ['book', 'Book'], ['inaccuracy', 'Inaccuracies'], ['mistake', 'Mistakes'], ['miss', 'Misses'], ['blunder', 'Blunders']].map(x => row(x[1], { w: cnt.w[x[0]], b: cnt.b[x[0]] }, { w: cell('cw.' + x[0], (o.cw || {})[x[0]], ''), b: cell('cb.' + x[0], (o.cb || {})[x[0]], '') })).join('') + '</table>';
   const games = Object.keys(S.calib).filter(id => S.reviews[id]).length, e = F.err, bits = [];
   const say = (e, name, f, unit) => (e.now > e.was ? name + ' is left as it was (the entries so far do not agree on a direction)' : name + ' is off by about ' + f(e.now) + unit + ' (it was ' + f(e.was) + ')');
   if (e.acc) bits.push(say(e.acc, 'accuracy', v => v.toFixed(1), ' points'));
@@ -582,7 +582,7 @@ function reviewHTML() {
   if (!rv) return h + '<p class="empty">Reviewing… the move ratings appear when Stockfish finishes.</p>' + movesList();
   const cw = R.counts(rv.recs, game.plies, 'w'), cb = R.counts(rv.recs, game.plies, 'b');
   h += graphHTML() + clockHTML() + gameRatingHTML() + commentHTML() + ccHTML() +
-    '<details class="card sum"' + (S.sumOpen ? ' open' : '') + '><summary>Move ratings <span class="muted">' + accOf(meta, rv, 'w') + '% vs ' + accOf(meta, rv, 'b') + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
+    '<details class="card sum"' + (S.sumOpen !== false ? ' open' : '') + '><summary>Move ratings <span class="muted">' + accOf(meta, rv, 'w') + '% vs ' + accOf(meta, rv, 'b') + '% accuracy · depth ' + rv.depth + '</span></summary><table><tr><th></th><th>' + esc(meta.white) + '</th><th>' + esc(meta.black) + '</th></tr>' +
     R.CLASSES.filter(k => cw[k] || cb[k] || k !== 'forced').map(k => '<tr><td><div class="cls">' + badge(k) + '<span><b>' + R.LABEL[k] + '</b><span class="muted mean">' + esc(R.MEANING[k]) + '</span></span></div></td><td>' + cw[k] + '</td><td>' + cb[k] + '</td></tr>').join('') + '</table></details>';
   return h + movesList();
 }
@@ -1777,7 +1777,8 @@ document.addEventListener('click', async e => {
   else if (act === 'repGame') { const m = S.games.find(g => g.id === a.dataset.id); if (m) openGame(m, +a.dataset.ply); }
   else if (act === 'endPlay') { const e = endCache.get(a.dataset.id); if (e) startSpar(e.color, [], { fen: e.fen, end: e, strong: true }); }
   else if (act === 'ccRead' && S.cur) {
-    const P = R.parseReview($('#ccPaste').value), id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), got = [];
+    const rv0 = S.cur.rv, mv = rv0 && rv0.colors ? { w: rv0.colors.filter(c => c === 'w').length, b: rv0.colors.filter(c => c === 'b').length } : null;
+    const P = R.parseReview($('#ccPaste').value, { moves: mv, elo: { w: S.cur.meta.wr, b: S.cur.meta.br } }), id = S.cur.meta.id, o = Object.assign({}, S.calib[id] || {}), got = [];
     if (P.acc) { o.aw = P.acc[0]; o.ab = P.acc[1]; got.push('accuracy'); }
     if (P.gr) { o.w = P.gr[0]; o.b = P.gr[1]; got.push('game rating'); }
     const ks = Object.keys(P.counts);

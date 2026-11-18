@@ -496,7 +496,7 @@ const CC_LABEL = { accuracy: 'acc', 'game rating': 'gr', brilliant: 'brilliant',
 /* Reads the summary copied from chess.com's Game Review: accuracy, game rating and the move counts, for White then Black.
    Works whether the numbers sit after each label ("Mistake 2 1") or around it ("2 Mistake 1").
    Returns { acc: [w, b], gr: [w, b], counts: { class: [w, b] }, found } with whatever it could find. */
-export function parseReview(text) {
+export function parseReview(text, ctx) {
   // a number counts only if it stood alone, so "(912)" next to a name, or a name ending in digits, never does
   const raw = String(text || '').replace(/[|•·:,]/g, ' ').split(/\s+/).filter(Boolean), tok = [];
   for (let i = 0; i < raw.length; i++) {
@@ -504,23 +504,60 @@ export function parseReview(text) {
     if (!t) continue; // badges such as !! or ??
     if (t === 'game' && n === 'rating') { tok.push({ t: 'game rating' }); i++; }
     else if ((t === 'great' || t === 'best') && /^moves?$/.test(n)) { tok.push({ t }); i++; }
-    else tok.push({ t: t.replace(/%$/, ''), n: /^\d+(\.\d+)?%?$/.test(raw[i]) ? +raw[i].replace('%', '') : null });
+    else tok.push({ t: t.replace(/%$/, ''), n: /^\d+(\.\d+)?%?$/.test(raw[i]) ? +raw[i].replace('%', '') : null, s: /^[\d.]+%?$/.test(raw[i]) ? raw[i].replace(/%/g, '') : null });
   }
-  const num = i => i >= 0 && i < tok.length && tok[i].n != null && !used.has(i), used = new Set(), out = { counts: {}, found: 0 };
+  const num = i => i >= 0 && i < tok.length && tok[i].n != null && !used.has(i), used = new Set(), out = { counts: {}, found: 0 }, joined = [];
+  const fitsK = (key, v) => (key === 'acc' ? v.every(y => y >= 0 && y <= 100) : key === 'gr' ? v.every(y => y >= 100 && y <= 3500 && y % 1 === 0) : v.every(y => y <= 300 && y % 1 === 0));
+  /* Copied from a phone, the two numbers of a row can run together: "2933" for 29 and 33, "84.172.3" for 84.1 and 72.3.
+     Every way of cutting such a string that gives two sensible numbers is kept, and the best cut is chosen below. */
+  const cuts = (key, str) => {
+    const out2 = [];
+    for (let k = 1; k < str.length; k++) {
+      const a = str.slice(0, k), b = str.slice(k);
+      if ((a.length > 1 && a[0] === '0') || (b.length > 1 && b[0] === '0' && b[1] !== '.') || a.endsWith('.') || b.startsWith('.')) continue;
+      if ((a.match(/\./g) || []).length > 1 || (b.match(/\./g) || []).length > 1) continue;
+      const v = [+a, +b];
+      if (key !== 'acc' && (a.includes('.') || b.includes('.'))) continue;
+      if (fitsK(key, v)) out2.push(v);
+    }
+    return out2;
+  };
   tok.forEach((x, i) => {
     const key = CC_LABEL[x.t];
     if (!key || (key === 'acc' && out.acc) || (key === 'gr' && out.gr) || out.counts[key]) return;
-    const fits = v => (key === 'acc' ? v.every(y => y >= 0 && y <= 100) : key === 'gr' ? v.every(y => y >= 100 && y <= 3500 && y % 1 === 0) : v.every(y => y <= 300 && y % 1 === 0));
     for (const pair of [[i - 1, i + 1], [i + 1, i + 2]]) {
       if (!pair.every(num)) continue;
       const v = pair.map(j => tok[j].n);
-      if (!fits(v)) continue;
+      if (!fitsK(key, v)) continue;
       pair.forEach(j => used.add(j));
       if (key === 'acc') out.acc = v; else if (key === 'gr') out.gr = v; else out.counts[key] = v;
       out.found++;
-      break;
+      return;
     }
+    const nx = tok[i + 1];
+    if (nx && nx.s && !used.has(i + 1)) { const c = cuts(key, nx.s); if (c.length) { used.add(i + 1); joined.push({ key, c }); } }
   });
+  if (joined.length) {
+    // choose the cuts: the move counts of each side should add up to that side's moves, ratings sit near the players' own
+    const mv = ctx && ctx.moves, elo = ctx && ctx.elo, counts = joined.filter(j => j.key !== 'acc' && j.key !== 'gr');
+    const even = v => Math.abs(String(v[0]).length - String(v[1]).length);
+    let pick = counts.map(j => j.c.slice().sort((p, q) => even(p) - even(q))[0]);
+    if (mv && counts.length && counts.reduce((a, j) => a * j.c.length, 1) <= 50000) {
+      const base = { w: 0, b: 0 };
+      for (const k in out.counts) { base.w += out.counts[k][0]; base.b += out.counts[k][1]; }
+      let best = Infinity;
+      const go = (i, w, b, chosen) => {
+        if (i === counts.length) { const e = Math.abs(w - mv.w) + Math.abs(b - mv.b) + chosen.reduce((s2, v) => s2 + even(v) * 0.01, 0); if (e < best) { best = e; pick = chosen.slice(); } return; }
+        for (const v of counts[i].c) { chosen.push(v); go(i + 1, w + v[0], b + v[1], chosen); chosen.pop(); }
+      };
+      go(0, base.w, base.b, []);
+    }
+    counts.forEach((j, i) => { out.counts[j.key] = pick[i]; out.found++; });
+    for (const j of joined) {
+      if (j.key === 'acc' && !out.acc) { out.acc = j.c.slice().sort((p, q) => even(p) - even(q))[0]; out.found++; }
+      if (j.key === 'gr' && !out.gr) { out.gr = j.c.slice().sort((p, q) => (elo ? Math.abs(p[0] - (+elo.w || p[0])) + Math.abs(p[1] - (+elo.b || p[1])) - Math.abs(q[0] - (+elo.w || q[0])) - Math.abs(q[1] - (+elo.b || q[1])) : 0) || even(p) - even(q))[0]; out.found++; }
+    }
+  }
   return out;
 }
 
