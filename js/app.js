@@ -508,7 +508,22 @@ function ccHTML() {
   let sum = games ? 'Tuned on ' + games + ' game' + (games === 1 ? '' : 's') + '.' : 'Nothing entered yet.';
   if (bits.length) sum += ' Checked against your entries, ' + bits.join(', and ') + '.';
   sum += F.n.cls >= 3 ? (F.k === 1 ? ' Move ratings already match chess.com’s counts.' : ' Move ratings are now ' + (F.k > 1 ? 'more forgiving' : 'stricter') + ' (bands ×' + F.k.toFixed(2) + ') to match chess.com’s counts.') : ' Move ratings start tuning once 3 sides have move counts (' + F.n.cls + ' so far).';
-  return h + '<p class="muted">' + sum + '</p></details>';
+  return h + '<p class="muted">' + sum + '</p>' + coverageHTML() + '</details>';
+}
+/* Which rating levels the calibration has games for, and which to add next. Each side of a game counts once,
+   filed by that player's rating; a level wants at least 4 sides with accuracy and game rating entered. */
+function coverageHTML() {
+  const B = {}, step = 200, want = 4;
+  for (const id in S.calib) {
+    const o = S.calib[id], g = findGame(id);
+    if (!g || !S.reviews[id]) continue;
+    for (const c of ['w', 'b']) { const r = c === 'w' ? g.wr : g.br; if (!r || !(o['a' + c] || o[c])) continue; const k = Math.floor(r / step) * step; B[k] = (B[k] || 0) + 1; }
+  }
+  const me = myElo(), lo = Math.max(0, Math.floor((me - 600) / step) * step), hi = Math.floor((me + 800) / step) * step, rows = [];
+  for (let k = Math.min(lo, ...Object.keys(B).map(Number)); k <= Math.max(hi, ...Object.keys(B).map(Number)); k += step) rows.push([k, B[k] || 0]);
+  const need = rows.filter(([k, n]) => n < want && k >= lo && k <= hi).sort((a, b) => Math.abs(a[0] + step / 2 - me) - Math.abs(b[0] + step / 2 - me));
+  return '<h4>Games entered by rating</h4><div class="cov">' + rows.map(([k, n]) => '<div class="orow"><span>' + k + '–' + (k + step - 1) + '</span><span class="wld"><i class="' + (n >= want ? 'w' : 'd') + '" style="flex:' + Math.min(n, want) + '"></i><i style="flex:' + Math.max(0, want - n) + '"></i></span><span class="muted">' + n + ' side' + (n === 1 ? '' : 's') + '</span></div>').join('') + '</div>' +
+    '<p>' + (need.length ? '<b>Add next:</b> ' + need.slice(0, 3).map(([k, n]) => (want - n) + ' side' + (want - n === 1 ? '' : 's') + ' rated ' + k + '–' + (k + step - 1)).join(', ') + '. Your own games and training games both count; each game gives two sides.' : '<b>Every level near yours has enough games.</b> More games now only help a little.') + '</p>';
 }
 /* Editing a game you pasted in or played here: which side you were, who the opponent was, both ratings and the date.
    The PGN's own header tags are rewritten to match, so the review, game ratings and lists all use the new details. */
