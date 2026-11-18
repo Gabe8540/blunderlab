@@ -445,9 +445,10 @@ function ccFit() {
     k = Math.round((1 + (kb - 1) * cls.length / (cls.length + 3)) * 100) / 100; // held back toward the standard bands while there is little to go on
   }
   // how far off the estimates are, each pair judged by a fit learned without it
-  const check = P => { if (P.length < 2) return null; let was = 0, now = 0; P.forEach((p, i) => { const f = R.fitLine(P.filter((q, j) => j !== i)); was += Math.abs(p[1] - p[0]); now += Math.abs(p[1] - f(p[0])); }); return { was: was / P.length, now: now / P.length }; };
-  const err = { acc: check(accP), gr: check(grP) }, use = (P, e) => (e && e.now > e.was ? x => x : R.fitLine(P)); // a fit that does worse than none is not used
-  return S._fit = { acc: use(accP, err.acc), gr: use(grP, err.gr), k, n: { acc: accP.length, gr: grP.length, cls: cls.length }, err };
+  const fitA = P => R.fitLocal(P, 8), fitG = P => R.fitLocal(P, 250); // tuned by level: accuracy within ~8 points, game rating within ~250
+  const check = (P, fit) => { if (P.length < 2) return null; let was = 0, now = 0; P.forEach((p, i) => { const f = fit(P.filter((q, j) => j !== i)); was += Math.abs(p[1] - p[0]); now += Math.abs(p[1] - f(p[0])); }); return { was: was / P.length, now: now / P.length }; };
+  const err = { acc: check(accP, fitA), gr: check(grP, fitG) }, use = (P, e, fit) => (e && e.now > e.was ? x => x : fit(P)); // a fit that does worse than none is not used
+  return S._fit = { acc: use(accP, err.acc, fitA), gr: use(grP, err.gr, fitG), k, n: { acc: accP.length, gr: grP.length, cls: cls.length }, err };
 }
 const clampR = (v, lo, hi, step) => +Math.max(lo, Math.min(hi, Math.round(v / step) * step)).toFixed(step < 1 ? 1 : 0);
 function ownAcc(rv, c) { return rv.acc[c] == null ? null : clampR(ccFit().acc(rv.acc[c]), 0, 100, 0.1); }

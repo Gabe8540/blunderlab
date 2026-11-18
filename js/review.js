@@ -667,3 +667,13 @@ export function cleanPgn(text) {
   const hs = heads.filter(h => !/^\[Result /.test(h)).concat('[Result "' + (result || '*') + '"]');
   return hs.join('\n') + '\n\n' + moves + (result || '*');
 }
+
+/* The straight-line fit, plus a correction that depends on where on the scale a number sits: entries near x count most
+   (bw sets how near), so games at 500 tune estimates around 500 and games at 2000 those around 2000. Where there are
+   few entries close by, the correction fades back to the straight line. */
+export function fitLocal(pairs, bw) {
+  const g = fitLine(pairs);
+  if (pairs.length < 3) return g;
+  const res = pairs.map(p => [p[0], p[1] - g(p[0])]);
+  return x => { let sw = 0, sr = 0; for (const [xi, r] of res) { const w = Math.exp(-Math.pow((xi - x) / bw, 2)); sw += w; sr += w * r; } return g(x) + sr / (sw + 1); };
+}
