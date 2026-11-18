@@ -400,8 +400,8 @@ function gamesHTML() {
     '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
     '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
     '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label></div>' +
-    '<div id="botFields" class="row" hidden><label class="grow">Bot’s name<input id="botName" placeholder="e.g. Martin" autocomplete="off"></label><label>Bot’s rating<input id="botElo" inputmode="numeric" placeholder="e.g. 250"></label>' +
-    '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
+    '<div id="botFields" hidden><div class="row"><label class="grow">Bot’s name<input id="botName" list="botList" placeholder="e.g. Martin" autocomplete="off"></label><label>Bot’s rating<input id="botElo" inputmode="numeric" placeholder="e.g. 250"></label>' +
+    '<label>My rating<input id="myElo" inputmode="numeric" placeholder="' + (myElo() || '') + '"></label><label>Date played<input id="gameDate" type="date" value="' + T.dayKey(Date.now()) + '"></label></div>' + botPickHTML('botName', 'botElo', 'myElo') + '</div><div class="row"><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
   const sync = trainHTML() + '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
   if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
   const keys = Object.keys(GCAT).filter(k => cats[k]);
@@ -516,15 +516,16 @@ function editHTML(meta) {
   const w = meta.color === 'w', mine = w ? meta.wr : meta.br, theirs = w ? meta.br : meta.wr, opt = (v, cur, l) => '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + l + '</option>';
   return '<div class="card edit"><h3 class="big">Game details</h3><div class="row"><label>I played<select id="edColor">' + opt('w', meta.color, 'White') + opt('b', meta.color, 'Black') + '</select></label>' +
     '<label>Against<select id="edKind">' + opt('person', meta.computer || meta.bot ? 'computer' : 'person', 'A person') + opt('computer', meta.computer || meta.bot ? 'computer' : 'person', 'A computer') + '</select></label></div>' +
-    '<div class="row"><label class="grow">Opponent’s name<input id="edOpp" value="' + esc(meta.opponent || '') + '" autocomplete="off"></label><label>Their rating<input id="edOppElo" inputmode="numeric" value="' + esc(theirs || '') + '"></label></div>' +
+    '<div class="row"><label class="grow">Opponent’s name<input id="edOpp" list="botList" value="' + esc(meta.opponent || '') + '" autocomplete="off"></label><label>Their rating<input id="edOppElo" inputmode="numeric" value="' + esc(theirs || '') + '"></label></div>' +
     '<div class="row"><label>My rating<input id="edMyElo" inputmode="numeric" value="' + esc(mine || '') + '"></label><label>Date played<input id="edDate" type="date" value="' + T.dayKey(meta.end || Date.now()) + '"></label></div>' +
+    '<div id="edPicks"' + (meta.computer || meta.bot ? '' : ' hidden') + '>' + botPickHTML('edOpp', 'edOppElo', 'edMyElo') + '</div>' +
     '<div class="row"><button class="btn" data-act="edSave">Save</button><button class="btn ghost" data-act="edCancel">Cancel</button></div></div>';
 }
 async function saveEdit() {
   const m = S.cur && S.cur.meta;
   if (!m || !m.pasted) return;
   const color = $('#edColor').value, w = color === 'w', was = m.color, me = S.settings.user.trim() || (was === 'w' ? m.white : m.black) || 'You';
-  const opp = $('#edOpp').value.trim() || 'Opponent', oe = Math.round(+$('#edOppElo').value) || '', mye = Math.round(+$('#edMyElo').value) || '', d = /^(\d{4})-(\d{2})-(\d{2})$/.exec($('#edDate').value);
+  const opp = ($('#edKind').value === 'computer' ? canonBot($('#edOpp').value.trim()) : $('#edOpp').value.trim()) || 'Opponent', oe = Math.round(+$('#edOppElo').value) || '', mye = Math.round(+$('#edMyElo').value) || '', d = /^(\d{4})-(\d{2})-(\d{2})$/.exec($('#edDate').value);
   const h = { White: w ? me : opp, Black: w ? opp : me, WhiteElo: String(w ? mye : oe), BlackElo: String(w ? oe : mye) };
   if (d) { h.Date = d[1] + '.' + d[2] + '.' + d[3]; h.UTCDate = h.Date; m.end = new Date(+d[1], +d[2] - 1, +d[3], 12).getTime(); }
   m.pgn = setHeaders(m.pgn, h);
@@ -1387,6 +1388,29 @@ function trainHTML() {
 
 /* ---------- adding one game by its chess.com link ---------- */
 
+// chess.com's bots and the ratings chess.com lists for them. Bots you have played come first, at the rating you gave them.
+const BOTS = [['Martin', 250], ['Elani', 400], ['Aron', 700], ['Emir', 1000], ['Maxim', 1000], ['Sven', 1100], ['Azeez', 1100], ['Maria', 1200], ['Nelson', 1300], ['David', 1400], ['Antonio', 1500], ['Isabel', 1600], ['Wally', 1800], ['Li', 2000]];
+const canonBot = n => { const b = BOTS.find(x => x[0].toLowerCase() === (n || '').toLowerCase()); return b ? b[0] : n; }; // "antonio" -> "Antonio"
+function botChoices() {
+  const seen = {}, out = [];
+  for (const g of S.games) if (g.computer && g.opponent) { const k = g.opponent.toLowerCase(); if (!(k in seen)) { seen[k] = 1; out.push({ name: g.opponent, elo: +(g.color === 'w' ? g.br : g.wr) || 0, used: true }); } }
+  for (const [n, e] of BOTS) if (!(n.toLowerCase() in seen)) out.push({ name: n, elo: e });
+  return out;
+}
+function myRatingChoices() {
+  const out = [], last = S.games.find(g => g.computer), r0 = last ? +(last.color === 'w' ? last.wr : last.br) || 0 : 0;
+  if (r0) out.push({ v: r0, l: 'last bot game' });
+  for (const tc of ['rapid', 'blitz', 'bullet', 'daily']) { const s = T.ratingSeries(S.hist, tc); if (s.length) out.push({ v: s[s.length - 1].r, l: tc }); }
+  return out;
+}
+// Quick picks under the bot fields: bots (with their ratings) and your own current ratings, one tap to fill in.
+function botPickHTML(nameId, eloId, myId) {
+  const bots = botChoices(), recent = bots.filter(b => b.used).slice(0, 6), chips = recent.length ? recent : bots.filter(b => ['Martin', 'Emir', 'Nelson', 'Antonio', 'Isabel'].includes(b.name)), mine = myRatingChoices();
+  return '<datalist id="botList">' + bots.map(b => '<option value="' + esc(b.name) + '"' + (b.elo ? ' label="' + b.elo + '"' : '') + '></option>').join('') + '</datalist>' +
+    '<div class="picks"><span class="muted">' + (recent.length ? 'Bots you have played:' : 'Common bots:') + '</span>' + chips.map(b => '<button class="chip" data-act="pickBot" data-n="' + esc(b.name) + '" data-e="' + (b.elo || '') + '" data-t="' + nameId + ',' + eloId + '">' + esc(b.name) + (b.elo ? ' <span class="muted">' + b.elo + '</span>' : '') + '</button>').join('') + '</div>' +
+    (mine.length ? '<div class="picks"><span class="muted">My rating:</span>' + mine.map(m => '<button class="chip" data-act="pickMy" data-e="' + m.v + '" data-t="' + myId + '">' + m.v + ' <span class="muted">' + m.l + '</span></button>').join('') + '</div>' : '') +
+    '<p class="muted small">Type any bot’s name for the full list. Ratings are the ones chess.com lists; change them if yours shows different.</p>';
+}
 // Sets PGN header tags, replacing ones already there.
 function setHeaders(pgn, h) {
   let s = pgn;
@@ -1698,7 +1722,7 @@ document.addEventListener('click', async e => {
     let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'No moves could be read from that. Paste the game’s PGN, or its move list, from chess.com.'; renderStatus(); return; }
     const bot = $('#pasteKind').value === 'computer';
     if (bot) { // a game against a computer: your name on the side you picked, the bot's on the other, with the ratings and date you entered
-      const me = S.settings.user.trim() || 'You', bn = $('#botName').value.trim() || 'Computer', be = Math.round(+$('#botElo').value) || '', mine = Math.round(+$('#myElo').value) || '', d = $('#gameDate').value;
+      const me = S.settings.user.trim() || 'You', bn = canonBot($('#botName').value.trim()) || 'Computer', be = Math.round(+$('#botElo').value) || '', mine = Math.round(+$('#myElo').value) || '', d = $('#gameDate').value;
       const w = color === 'w', h = { White: w ? me : bn, Black: w ? bn : me, WhiteElo: String(w ? mine : be), BlackElo: String(w ? be : mine) };
       if (/^\d{4}-\d{2}-\d{2}$/.test(d)) { h.Date = d.replace(/-/g, '.'); h.UTCDate = h.Date; }
       pgn = setHeaders(pgn, h);
@@ -1778,6 +1802,8 @@ document.addEventListener('click', async e => {
       await store.set({ trainGames: S.trainGames }); touchSync(); applyBands().then(() => renderPanel());
     }
   }
+  else if (act === 'pickBot') { const [n, e] = a.dataset.t.split(','); $('#' + n).value = a.dataset.n; if (a.dataset.e) $('#' + e).value = a.dataset.e; }
+  else if (act === 'pickMy') { $('#' + a.dataset.t).value = a.dataset.e; }
   else if (act === 'edOpen') { S.editing = S.cur.meta.id; renderPanel(); }
   else if (act === 'edCancel') { S.editing = ''; renderPanel(); }
   else if (act === 'edSave') saveEdit();
@@ -1816,6 +1842,7 @@ document.addEventListener('change', e => {
   }
   else if (t.id === 'depth') { S.settings.depth = t.value; saveSettings(); }
   else if (t.id === 'pasteKind') botPrefill($('#pgn').value);
+  else if (t.id === 'edKind') { const p = $('#edPicks'); if (p) p.hidden = t.value !== 'computer'; }
   else if (t.id === 'autoOn') { S.settings.auto = t.checked; saveSettings(); }
   else if (t.id === 'botSide' || t.id === 'botLvl') { (S.tr.bot || (S.tr.bot = { side: 'r', lvl: 0 }))[t.id === 'botSide' ? 'side' : 'lvl'] = t.value; }
   else if (t.id === 'goalRating' || t.id === 'goalPz' || t.id === 'goalRv') {
@@ -1828,7 +1855,11 @@ document.addEventListener('change', e => {
   else if (t.id === 'trTc') { S.tr.tc = t.value; renderPanel(); }
   if (t.tagName === 'SELECT' || t.type === 'checkbox') t.blur(); // so the arrow keys go back to stepping through moves
 });
-document.addEventListener('input', e => { if (e.target.id === 'pgn' && $('#pasteKind')) { const ev = (/\[Event "([^"]*)"\]/.exec(e.target.value) || [])[1] || ''; if (/computer|bot/i.test(ev)) $('#pasteKind').value = 'computer'; botPrefill(e.target.value); } if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
+document.addEventListener('input', e => {
+  if (e.target.id === 'botName' || e.target.id === 'edOpp') { // a known bot's name fills in its rating
+    const b = botChoices().find(x => x.name.toLowerCase() === e.target.value.trim().toLowerCase()), el = $(e.target.id === 'botName' ? '#botElo' : '#edOppElo');
+    if (b && b.elo && el && (e.target.id === 'botName' || ($('#edKind') || {}).value === 'computer')) el.value = b.elo;
+  } if (e.target.id === 'pgn' && $('#pasteKind')) { const ev = (/\[Event "([^"]*)"\]/.exec(e.target.value) || [])[1] || ''; if (/computer|bot/i.test(ev)) $('#pasteKind').value = 'computer'; botPrefill(e.target.value); } if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'gameLink') addByLink(e.target.value); else if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }
