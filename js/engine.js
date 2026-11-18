@@ -51,13 +51,14 @@ export class Engine {
 // Analyse every position of a game. onStep(done, total). Returns evals[] (one per position, final one included).
 export async function analyseGame(engine, game, helpers, opts, onStep, cancelled) {
   const fens = [game.start].concat(game.plies.map(p => p.after)), evals = [];
+  const efens = [game.estart || game.start].concat(game.plies.map(p => p.eafter || p.after)); // Chess960: with its castling rights
   engine.newGame();
   for (let i = 0; i < fens.length; i++) {
     if (cancelled && cancelled()) return null;
     const over = helpers.terminalScore(fens[i]);
     if (over) evals.push({ lines: [over], legal: 0 });
     else {
-      const r = await engine.analyse(fens[i], { depth: opts.depth, multipv: 2, movetime: opts.movetime });
+      const r = await engine.analyse(efens[i], { depth: opts.depth, multipv: 2, movetime: opts.movetime });
       evals.push({ lines: r.lines.map(l => { const o = { pv: l.pv.slice(0, 10) }; if (l.mate != null) o.mate = l.mate; else o.cp = l.cp; return o; }), legal: helpers.legalCount(fens[i]) });
     }
     if (onStep) onStep(i + 1, fens.length);

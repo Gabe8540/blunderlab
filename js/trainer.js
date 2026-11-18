@@ -34,7 +34,8 @@ export function histRecord(g, user, names) {
     const n = names && names[bookKey(m.after)];
     if (n) op = n;
   }
-  return { id: String(g.uuid || g.url), end: (g.end_time || 0) * 1000, tc: g.time_class || '', c: black ? 'b' : 'w', res: outcome(mine.result),
+  const tc = g.rules === 'chess960' ? (g.time_class === 'daily' ? 'daily960' : 'chess960') : g.time_class || ''; // Chess960 has ratings of its own
+  return { id: String(g.uuid || g.url), end: (g.end_time || 0) * 1000, tc, c: black ? 'b' : 'w', res: outcome(mine.result),
     r: mine.rating || 0, o: opp.rating || 0, rated: g.rated !== false, mv: ok.join(' '), op, opp: opp.username || '' };
 }
 
@@ -244,7 +245,7 @@ export function openingReport(games, reviews) {
   const by = {};
   for (const g of games) {
     const rv = reviews[g.id];
-    if (!rv || !rv.colors || g.bot || !g.opening) continue;
+    if (!rv || !rv.colors || g.bot || g.v960 || !g.opening) continue;
     const key = g.color + (g.opening.split(':')[0]), o = by[key] || (by[key] = { name: g.opening.split(':')[0], c: g.color, n: 0, win: 0, book: 0, accSum: 0, accN: 0, slips: {} });
     o.n++; if (g.result === 'win') o.win++;
     let book = 0; while (book < rv.recs.length && rv.recs[book].cls === 'book') book++;

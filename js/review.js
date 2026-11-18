@@ -46,6 +46,7 @@ export const whiteShare = (score, whiteToMove) => { const e = expPts(score); ret
 
 // PGN -> { headers, plies: [{ san, uci, from, to, piece, color, captured, promotion, before, after, clock }], start, result }
 export function readGame(pgn) {
+  if (is960(pgn)) return read960(pgn);
   const c = new Chess();
   c.loadPgn(pgn);
   const headers = c.header ? c.header() : (c.getHeaders ? c.getHeaders() : {});
@@ -70,7 +71,12 @@ export function lineToSan(fen, uciMoves, max) {
   const c = new Chess(fen), out = [];
   for (const u of (uciMoves || []).slice(0, max || 99)) {
     let m;
-    try { m = c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); } catch (e) { break; }
+    try { m = c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u.slice(4, 5) || undefined }); }
+    catch (e) { // a Chess960 engine castles by moving the king onto its own rook
+      const k = c.get(u.slice(0, 2)), r = c.get(u.slice(2, 4));
+      if (!k || !r || k.type !== 'k' || r.type !== 'r' || k.color !== r.color) break;
+      m = castle960(c, u.slice(0, 2), u.slice(2, 4));
+    }
     if (!m) break;
     out.push({ san: m.san, uci: u, from: m.from, to: m.to, fen: m.after, color: m.color });
   }
@@ -516,4 +522,80 @@ export function parseReview(text) {
     }
   });
   return out;
+}
+
+/* ---------- Chess960 ---------- */
+// The move checker only knows normal castling, so in Chess960 games castling is played here and the board then
+// carries no castling rights of its own. The rights are tracked alongside and written into a second FEN for the engine.
+
+const FILES = 'abcdefgh';
+// A Chess960 game: a Variant header that says so, or a set-up position whose back rank is not the usual one.
+export function is960(pgn) {
+  if (/\[Variant "[^"]*960[^"]*"\]/i.test(pgn)) return true;
+  const f = /\[FEN "([^"]+)"\]/.exec(pgn);
+  if (!f) return false;
+  const rows = f[1].split(' ')[0].split('/');
+  return /^[KQRBNkqrbn]{8}$/.test(rows[0]) && rows[0] !== 'rnbqkbnr' && rows[7] && rows[7].toLowerCase() === rows[0].toLowerCase() && /K|Q|k|q|[A-Ha-h]/.test(f[1].split(' ')[2] || '');
+}
+const kingOn = (c, color) => { for (const row of c.board()) for (const p of row) if (p && p.type === 'k' && p.color === color) return p.square; return null; };
+// Castling rights from a FEN castling field, as rook squares: K / Q mean the outermost rook on that side, A-H a rook's file.
+function rights960(c, field) {
+  const out = { w: [], b: [] };
+  for (const ch of field || '') {
+    if (ch === '-') continue;
+    const color = ch === ch.toUpperCase() ? 'w' : 'b', rank = color === 'w' ? '1' : '8', k = kingOn(c, color);
+    if (!k || k[1] !== rank) continue;
+    const kf = FILES.indexOf(k[0]), up = ch.toUpperCase(), isRook = f => { const p = c.get(FILES[f] + rank); return p && p.type === 'r' && p.color === color; };
+    let f = -1;
+    if (up === 'K') { for (let x = 7; x > kf; x--) if (isRook(x)) { f = x; break; } }
+    else if (up === 'Q') { for (let x = 0; x < kf; x++) if (isRook(x)) { f = x; break; } }
+    else if (isRook(FILES.indexOf(up.toLowerCase()))) f = FILES.indexOf(up.toLowerCase());
+    if (f >= 0) out[color].push(FILES[f] + rank);
+  }
+  return out;
+}
+const shredder = r => (r.w.map(q => q[0].toUpperCase()).sort().reverse().join('') + r.b.map(q => q[0]).sort().reverse().join('')) || '-';
+const withCastling = (fen, field) => { const p = fen.split(' '); p[2] = field; return p.join(' '); };
+// Castles the king on kingSq with the rook on rookSq: king to the g- or c-file, rook to the f- or d-file.
+export function castle960(c, kingSq, rookSq) {
+  const color = c.get(kingSq).color, rank = kingSq[1], short = rookSq[0] > kingSq[0], before = c.fen(), p = before.split(' ');
+  const kTo = (short ? 'g' : 'c') + rank, rTo = (short ? 'f' : 'd') + rank;
+  c.remove(kingSq); c.remove(rookSq);
+  c.put({ type: 'k', color }, kTo); c.put({ type: 'r', color }, rTo);
+  const q = c.fen().split(' ');
+  c.load([q[0], color === 'w' ? 'b' : 'w', '-', '-', +p[4] + 1, +p[5] + (color === 'b' ? 1 : 0)].join(' '));
+  const san = (short ? 'O-O' : 'O-O-O') + (c.isCheckmate() ? '#' : c.inCheck() ? '+' : '');
+  return { san, uci: kingSq + rookSq, from: kingSq, to: rookSq, piece: 'k', color, captured: null, promotion: null, before, after: c.fen(), castle: true };
+}
+// Same shape as readGame, plus estart and eafter: the positions with their castling rights, for the engine.
+function read960(pgn) {
+  const headers = {};
+  pgn.replace(/^\s*\[(\w+)\s+"([^"]*)"\]\s*$/gm, (x, k, v) => { headers[k] = v; return ''; });
+  const fen0 = headers.FEN || 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', c = new Chess(withCastling(fen0, '-'));
+  let rights = rights960(c, fen0.split(' ')[2]);
+  const start = c.fen(), estart = withCastling(start, shredder(rights)), plies = [];
+  const body = pgn.replace(/^\s*\[[^\n]*\]\s*$/gm, ' '), re = /\{([^}]*)\}|([^\s{}]+)/g;
+  let m;
+  while ((m = re.exec(body))) {
+    if (m[1] != null) { const k = /\[%clk\s+(\d+):(\d+):(\d+(?:\.\d+)?)\]/.exec(m[1]); if (k && plies.length) plies[plies.length - 1].clock = (+k[1]) * 3600 + (+k[2]) * 60 + (+k[3]); continue; }
+    const t = m[2].replace(/^\d+\.+/, '').replace(/[!?]+$/, '');
+    if (!t || /^(1-0|0-1|1\/2-1\/2|\*)$/.test(t) || /^\$\d+$/.test(t)) continue;
+    const color = c.turn(), opp = color === 'w' ? 'b' : 'w';
+    let ply;
+    if (/^(O-O(-O)?|0-0(-0)?)[+#]?$/.test(t)) {
+      const long = /^(O-O-O|0-0-0)/.test(t), ks = kingOn(c, color), rs = ks && rights[color].find(sq => (long ? sq[0] < ks[0] : sq[0] > ks[0]));
+      if (!rs) break;
+      ply = castle960(c, ks, rs);
+    } else {
+      let mv;
+      try { mv = c.move(t); } catch (e) { break; }
+      if (!mv) break;
+      ply = { san: mv.san, uci: mv.from + mv.to + (mv.promotion || ''), from: mv.from, to: mv.to, piece: mv.piece, color: mv.color, captured: mv.captured || null, promotion: mv.promotion || null, before: mv.before, after: mv.after };
+    }
+    if (ply.piece === 'k') rights[color] = [];
+    rights = { [color]: rights[color].filter(sq => sq !== ply.from), [opp]: rights[opp].filter(sq => sq !== ply.to) };
+    ply.clock = null; ply.eafter = withCastling(ply.after, shredder(rights));
+    plies.push(ply);
+  }
+  return { headers, plies, start, estart, v960: true };
 }

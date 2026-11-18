@@ -77,12 +77,13 @@ async function getJSON(url, who) {
 function toMeta(g, user) {
   const me = user.toLowerCase(), white = (g.white && g.white.username) || '?', black = (g.black && g.black.username) || '?';
   const color = black.toLowerCase() === me ? 'b' : 'w', mine = color === 'w' ? g.white : g.black, opp = color === 'w' ? g.black : g.white;
-  let opening = '';
-  try { const game = R.readGame(g.pgn); for (const p of game.plies.slice(0, 40)) { const n = S.book.names[R.bookKey(p.after)]; if (n) opening = n; } } catch (e) { return null; }
+  const v960 = g.rules === 'chess960';
+  let opening = v960 ? 'Chess960' : '';
+  if (!v960) try { const game = R.readGame(g.pgn); for (const p of game.plies.slice(0, 40)) { const n = S.book.names[R.bookKey(p.after)]; if (n) opening = n; } } catch (e) { return null; }
   if (!opening) { const m = /\[ECOUrl ".*\/openings\/([^"]+)"\]/.exec(g.pgn); if (m) opening = m[1].replace(/-/g, ' ').replace(/ \d.*$/, ''); }
   return { id: String(g.uuid || g.url), url: g.url || '', pgn: g.pgn, white, black, wr: g.white && g.white.rating, br: g.black && g.black.rating, color,
     result: R.outcome(mine && mine.result), how: (mine && mine.result === 'win' ? opp && opp.result : mine && mine.result) || '', opponent: opp && opp.username,
-    timeClass: g.time_class || '', end: (g.end_time || 0) * 1000, opening };
+    timeClass: g.time_class || '', end: (g.end_time || 0) * 1000, opening, v960 };
 }
 /* Reads games from chess.com. 'full' fetches every month not stored yet (back to your first game) and re-reads the newest two;
    'quick' reads only the current month. Returns the games that finished since the last time we looked. */
@@ -110,7 +111,7 @@ async function syncGames(mode) {
     let d;
     try { d = await getJSON(months[i]); } catch (e) { if (mode === 'quick') continue; throw e; }
     for (const g of d.games || []) {
-      if ((g.rules && g.rules !== 'chess') || !g.pgn) continue;
+      if ((g.rules && g.rules !== 'chess' && g.rules !== 'chess960') || !g.pgn) continue;
       const id = String(g.uuid || g.url);
       if (!hk.has(id)) { const h = T.histRecord(g, user, S.book.names); if (h) { hk.set(id, S.hist.length); S.hist.push(h); } }
       else if (S.hist[hk.get(id)].opp === undefined) { const h = T.histRecord(g, user, S.book.names); if (h) S.hist[hk.get(id)] = h; }
@@ -119,8 +120,8 @@ async function syncGames(mode) {
     if (settled.includes(months[i]) && !S.histMonths.includes(months[i])) S.histMonths.push(months[i]);
   }
   S.hist.sort((a, b) => a.end - b.end);
-  let room = 80;
-  S.games = S.games.concat(fresh).sort((a, b) => b.end - a.end).filter(g => g.pasted || g.added || S.reviews[g.id] || room-- > 0);
+  const room = {}; // up to 80 recent games of each kind
+  S.games = S.games.concat(fresh).sort((a, b) => b.end - a.end).filter(g => g.pasted || g.added || S.reviews[g.id] || (room[gcat(g)] = (room[gcat(g)] == null ? 80 : room[gcat(g)]) - 1) >= 0);
   S.histUser = lower;
   const newest = S.games.reduce((a, g) => (g.pasted ? a : Math.max(a, g.end)), 0);
   await store.set(Object.assign({ games: S.games, hist: S.hist, histMonths: S.histMonths, histUser: lower, lastEnd: newest }, mode === 'quick' ? {} : { histV: 2 }));
@@ -147,7 +148,7 @@ function softPanel() { // refresh the panel unless that would wipe something bei
 
 let eloData = null;
 function eloHTML() {
-  const all = ['rapid', 'blitz', 'bullet', 'daily'].map(tc => ({ tc, s: T.ratingSeries(S.hist, tc) })).filter(x => x.s.length >= 3).sort((a, b) => b.s.length - a.s.length);
+  const all = ['rapid', 'blitz', 'bullet', 'daily', 'chess960', 'daily960'].map(tc => ({ tc, s: T.ratingSeries(S.hist, tc) })).filter(x => x.s.length >= 3).sort((a, b) => b.s.length - a.s.length);
   if (!all.length) return '<h3>Rating</h3><div class="card"><p class="muted">No rated games loaded yet. Press “Load my games” on the Games tab.</p></div>';
   const pick = all.find(x => x.tc === S.eloTc) || all[0], full = pick.s, ser = S.eloAll ? full : full.slice(-150), n = ser.length, P = T.project(full, 30), ahead = P ? P.ahead : 0, skip = full.length - n;
   S.eloTc = pick.tc;
@@ -208,6 +209,7 @@ async function review(meta, onStep) {
   engines();
   const game = R.readGame(meta.pgn);
   const depth = DEPTHS[S.settings.depth] || 14;
+  if (bg.v960 !== !!game.v960) { bg.v960 = !!game.v960; bg.option('UCI_Chess960', String(bg.v960)); }
   const evals = await analyseGame(bg, game, R, { depth, movetime: depth >= 18 ? 6000 : 3000 }, onStep, () => cancelBatch);
   if (!evals) return null;
   const k = ccFit().k, recs = R.classify(game, evals, S.book, k);
@@ -281,10 +283,14 @@ function startLive() {
   const { fen } = shown(), token = ++liveToken;
   S.live = { fen, lines: storedLines(fen), over: R.terminalScore(fen) };
   if (!live) return;
+  // Chess960: the engine needs to know, and the game's own positions carry their castling rights in a second FEN
+  const g960 = !!(S.cur && S.cur.game.v960 && !S.puzzle && !S.train), plies = g960 ? S.cur.game.plies : null;
+  const efen = g960 && !S.line ? (S.ply ? plies[S.ply - 1].eafter : S.cur.game.estart) : fen;
+  if (live.v960 !== g960) { live.v960 = g960; live.option('UCI_Chess960', String(g960)); }
   if (S.train && hideEngine()) return; // the trainer is using this engine to check moves
   live.stop();
   if (S.live.over || hideEngine()) return;
-  live.analyse(fen, { depth: 20, multipv: 3, movetime: 8000, skip: () => token !== liveToken, onInfo: lines => {
+  live.analyse(efen, { depth: 20, multipv: 3, movetime: 8000, skip: () => token !== liveToken, onInfo: lines => {
     if (token !== liveToken) return;
     if (lines[0] && (!S.live.lines.length || !S.live.lines[0].depth || lines[0].depth >= Math.min(S.live.lines[0].depth, 10))) { S.live.lines = lines.slice(); paintLive(); }
   } });
@@ -366,22 +372,41 @@ function renderStatus() {
 const badge = cls => '<b class="badge c-' + cls + '" title="' + R.LABEL[cls] + ': ' + esc(R.MEANING[cls]) + '">' + R.SYMBOL[cls] + '</b>';
 const when = t => t ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '';
 
+// The kind of game, for the categories on the Games tab.
+const gcat = g => (g.bot ? 'bot' : g.computer ? 'computer' : g.v960 ? (g.timeClass === 'daily' ? 'daily960' : 'chess960') : g.timeClass || 'other');
+const GCAT = { rapid: 'Rapid', blitz: 'Blitz', bullet: 'Bullet', daily: 'Daily', chess960: 'Chess960', daily960: 'Daily 960', bot: 'Vs Stockfish', computer: 'Vs computer', other: 'Other' };
+// "600" -> 10 min, "180+2" -> 3|2, "1/86400" -> 1 day
+function tcLabel(pgn) {
+  const m = /\[TimeControl "([^"]+)"\]/.exec(pgn || '');
+  if (!m) return '';
+  const d = /^1\/(\d+)$/.exec(m[1]);
+  if (d) { const days = Math.round(+d[1] / 86400); return days + ' day' + (days === 1 ? '' : 's'); }
+  const t = /^(\d+)(?:\+(\d+))?$/.exec(m[1]);
+  if (!t) return '';
+  const base = +t[1], mins = base >= 60 ? (base % 60 ? (base / 60).toFixed(1) : base / 60) : null;
+  return t[2] && +t[2] ? (mins != null ? mins : base + 's') + '|' + t[2] : mins != null ? mins + ' min' : base + ' sec';
+}
 function gamesHTML() {
-  const un = S.games.filter(g => !S.reviews[g.id]);
+  const cats = {};
+  S.games.forEach(g => { const k = gcat(g); cats[k] = (cats[k] || 0) + 1; });
+  if (S.gcat && !cats[S.gcat]) S.gcat = '';
+  const shown = S.games.filter(g => !S.gcat || gcat(g) === S.gcat), un = shown.filter(g => !S.reviews[g.id]);
   let h = '<div class="card"><div class="row"><label class="grow">chess.com username<input id="user" value="' + esc(S.settings.user) + '" placeholder="your username" autocomplete="off" autocapitalize="off" spellcheck="false"></label>' +
     '<label>Depth<select id="depth">' + [['quick', 'Quick'], ['standard', 'Standard'], ['deep', 'Deep (slow)']].map(o => '<option value="' + o[0] + '"' + (S.settings.depth === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label></div>' +
-    '<div class="row"><button class="btn" data-act="load">Load my games</button>' + (un.length ? '<button class="btn ghost" data-act="batch">Review all (' + un.length + ')</button>' : '') +
+    '<div class="row"><button class="btn" data-act="load">Load my games</button>' + (un.length ? '<button class="btn ghost" data-act="batch">Review all' + (S.gcat ? ' ' + GCAT[S.gcat].toLowerCase() : '') + ' (' + un.length + ')</button>' : '') +
     '<button class="btn ghost" data-act="paste">Paste a PGN</button><button class="btn ghost" data-act="addLink">Add a game by link</button></div>' +
     '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
     '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
-    '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
+    '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
   const sync = '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
   if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
-  h += '<div class="games">' + S.games.map(g => {
+  const keys = Object.keys(GCAT).filter(k => cats[k]);
+  if (keys.length > 1) h += '<div class="seg chips gcats"><button data-act="gcat" data-v="" aria-pressed="' + !S.gcat + '">All <span class="muted">' + S.games.length + '</span></button>' + keys.map(k => '<button data-act="gcat" data-v="' + k + '" aria-pressed="' + (S.gcat === k) + '">' + GCAT[k] + ' <span class="muted">' + cats[k] + '</span></button>').join('') + '</div>';
+  h += '<div class="games">' + shown.map(g => {
     const rv = S.reviews[g.id];
     return '<button class="game" data-game="' + esc(g.id) + '"><span class="res ' + g.result + '">' + g.result.charAt(0).toUpperCase() + '</span>' +
       '<span class="gmain"><b><span class="dot ' + g.color + '"></span>vs ' + esc(g.opponent || '?') + ' <span class="muted">' + esc((g.color === 'w' ? g.br : g.wr) || '') + '</span>' + ccTag(g.id) + '</b>' +
-      '<span class="muted">' + esc([g.opening || 'Unknown opening', g.timeClass, when(g.end)].filter(Boolean).join(' · ')) + '</span></span>' +
+      '<span class="muted">' + esc((g.v960 ? [GCAT[gcat(g)] + ' ' + tcLabel(g.pgn), when(g.end)] : [g.opening || 'Unknown opening', [g.bot || g.computer ? GCAT[gcat(g)] : g.timeClass, g.bot ? '' : tcLabel(g.pgn)].filter(Boolean).join(' '), when(g.end)]).filter(Boolean).join(' · ')) + '</span></span>' +
       '<span class="gacc">' + (rv ? accOf(g, rv, g.color) + '%' + (gameRating(g, rv, g.color) ? '<i>' + gameRating(g, rv, g.color).rating + '</i>' : '') : '<span class="muted">Review</span>') + '</span></button>';
   }).join('') + '</div>';
   return h + sync;
@@ -1303,6 +1328,11 @@ function weeklyHTML() {
 /* ---------- adding one game by its chess.com link ---------- */
 
 function addByLink(text) {
+  if (/game\/computer\//.test(text || '')) { // chess.com does not publish games against its bots: they come in as a PGN
+    S.error = 'chess.com does not share games against its computer bots, so they cannot be found by link. On chess.com, open the game, press Share, choose PGN and copy it, then paste it into “Paste a PGN” here and set Against to “A computer”.';
+    renderStatus(); const lb = $('#linkBox'), pb = $('#pasteBox'); if (lb) lb.hidden = true; if (pb) { pb.hidden = false; $('#pasteKind').value = 'computer'; $('#pgn').focus(); }
+    return;
+  }
   const m = /game\/(?:(live|daily)\/)?(\d+)/.exec(text || '') || /^\s*(\d{3,})\s*$/.exec(text || '');
   if (!m) { S.error = 'That does not look like a chess.com game link. It should look like chess.com/game/live/123456789.'; renderStatus(); return; }
   addGameById(m[2] || m[1], m[2] ? m[1] : '');
@@ -1339,7 +1369,7 @@ async function addGameById(id, kind) {
   } catch (e) { S.busy = null; S.error = e.message; renderStatus(); return; }
   S.busy = null;
   if (!found) { S.error = 'Game ' + id + ' is not among ' + user + '’s games on chess.com. Check the link, or that it was played on this account.'; renderStatus(); return; }
-  if (found.rules && found.rules !== 'chess') { S.error = 'That game is a chess variant, which Blunder Lab cannot review.'; renderStatus(); return; }
+  if (found.rules && found.rules !== 'chess' && found.rules !== 'chess960') { S.error = 'That game is a chess variant Blunder Lab cannot review (it handles standard chess and Chess960).'; renderStatus(); return; }
   const meta = toMeta(found, user);
   if (!meta) { S.error = 'That game could not be read.'; renderStatus(); return; }
   meta.added = true;
@@ -1569,7 +1599,8 @@ document.addEventListener('click', async e => {
   const a = t.closest('[data-act]'); if (!a) return;
   const act = a.dataset.act;
   if (act === 'load') { S.error = ''; S.busy = { text: 'Loading your games from chess.com', done: 0, total: 1 }; renderStatus(); let fresh = []; try { fresh = await syncGames('full'); } catch (err) { S.error = err.message; } S.busy = null; render(); fresh = fresh.filter(g => !S.reviews[g.id]); if (fresh.length && S.settings.auto !== false) reviewMany(fresh, true); }
-  else if (act === 'batch') { const list = S.games.filter(g => !S.reviews[g.id]); if (list.length && !S.busy) reviewMany(list); }
+  else if (act === 'gcat') { S.gcat = a.dataset.v; renderPanel(); }
+  else if (act === 'batch') { const list = S.games.filter(g => !S.reviews[g.id] && (!S.gcat || gcat(g) === S.gcat)); if (list.length && !S.busy) reviewMany(list); }
   else if (act === 'openNotice') { const m = S.games.find(g => g.id === S.notice.id); S.notice = null; if (m) openGame(m); else renderStatus(); }
   else if (act === 'clearNotice') { S.notice = null; renderStatus(); }
   else if (act === 'cancel') { cancelBatch = true; if (bg) bg.stop(); }
@@ -1580,10 +1611,14 @@ document.addEventListener('click', async e => {
   else if (act === 'pasteGo') {
     const pgn = $('#pgn').value.trim(), color = $('#pasteColor').value;
     let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'That does not look like a PGN.'; renderStatus(); return; }
-    const hd = game.headers, meta = { id: 'p' + Date.now().toString(36), pasted: true, url: '', pgn, white: hd.White || 'White', black: hd.Black || 'Black', wr: hd.WhiteElo || '', br: hd.BlackElo || '', color,
-      result: hd.Result === '1/2-1/2' ? 'draw' : (hd.Result === '1-0') === (color === 'w') ? 'win' : 'loss', opponent: color === 'w' ? hd.Black || 'Black' : hd.White || 'White', timeClass: '', end: Date.now(), opening: '' };
-    for (const p of game.plies.slice(0, 40)) { const n = S.book.names[R.bookKey(p.after)]; if (n) meta.opening = n; }
-    S.games.unshift(meta); await store.set({ games: S.games }); openGame(meta);
+    const hd = game.headers, me = S.settings.user.trim().toLowerCase(), side = me && (hd.White || '').toLowerCase() === me ? 'w' : me && (hd.Black || '').toLowerCase() === me ? 'b' : color; // your own name in the PGN decides the colour
+    const day = /^(\d{4})\.(\d{2})\.(\d{2})$/.exec(hd.UTCDate || hd.Date || ''), tm = /^(\d{2}):(\d{2})/.exec(hd.EndTime || hd.UTCTime || '');
+    const end = day ? Date.UTC(+day[1], +day[2] - 1, +day[3], tm ? +tm[1] : 12, tm ? +tm[2] : 0) : Date.now();
+    const meta = { id: 'p' + Date.now().toString(36), pasted: true, url: '', pgn, white: hd.White || 'White', black: hd.Black || 'Black', wr: hd.WhiteElo || '', br: hd.BlackElo || '', color: side,
+      result: hd.Result === '1/2-1/2' ? 'draw' : (hd.Result === '1-0') === (side === 'w') ? 'win' : 'loss', opponent: side === 'w' ? hd.Black || 'Black' : hd.White || 'White', timeClass: '', end: Math.min(end, Date.now()), opening: game.v960 ? 'Chess960' : '',
+      v960: !!game.v960, computer: $('#pasteKind').value === 'computer' };
+    if (!game.v960) for (const p of game.plies.slice(0, 40)) { const n = S.book.names[R.bookKey(p.after)]; if (n) meta.opening = n; }
+    S.games.unshift(meta); S.games.sort((a, b) => b.end - a.end); await store.set({ games: S.games }); $('#pasteBox').hidden = true; openGame(meta);
   }
   else if (act === 'exitLine') exitLine();
   else if (act === 'lineBest' || act === 'lineNext') {
@@ -1670,7 +1705,7 @@ document.addEventListener('change', e => {
   else if (t.id === 'trTc') { S.tr.tc = t.value; renderPanel(); }
   if (t.tagName === 'SELECT' || t.type === 'checkbox') t.blur(); // so the arrow keys go back to stepping through moves
 });
-document.addEventListener('input', e => { if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
+document.addEventListener('input', e => { if (e.target.id === 'pgn' && $('#pasteKind')) { const ev = (/\[Event "([^"]*)"\]/.exec(e.target.value) || [])[1] || ''; if (/computer|bot/i.test(ev)) $('#pasteKind').value = 'computer'; } if (e.target.id === 'opq') { S.tr.q = e.target.value; $('#opres').innerHTML = searchHTML(); } });
 for (const ev of ['pointermove', 'pointerdown']) document.addEventListener(ev, e => { if (e.target.closest && e.target.closest('#eloPlot')) eloHover(e); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'gameLink') addByLink(e.target.value); else if (e.key === 'Enter' && e.target.id === 'scoutUser') scoutGo(e.target.value); else if (e.key === 'Enter' && ((e.target.dataset && e.target.dataset.cal) || /^goal/.test(e.target.id))) e.target.blur(); });
 function softTrainer() { const a = document.activeElement; if (a && a.id === 'opq') $('#opres').innerHTML = searchHTML(); else renderPanel(); }
