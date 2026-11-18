@@ -599,3 +599,34 @@ function read960(pgn) {
   }
   return { headers, plies, start, estart, v960: true };
 }
+
+/* ---------- pasted games in any common form ---------- */
+
+const FIG = { '♔': 'K', '♕': 'Q', '♖': 'R', '♗': 'B', '♘': 'N', '♙': '', '♚': 'K', '♛': 'Q', '♜': 'R', '♝': 'B', '♞': 'N', '♟': '' };
+const SANRE = /^([KQRBN][a-h]?[1-8]?x?[a-h][1-8]|[a-h](x[a-h])?[1-8](=?[QRBN])?|O-O(-O)?)[+#]?$/;
+/* Turns what was pasted into a PGN the reader accepts: a full PGN, a bare move list, or moves copied from a game page
+   (piece symbols instead of letters, move times, numbers on their own lines). Headers are kept as they are. */
+export function cleanPgn(text) {
+  const t = String(text || '').replace(/\r/g, '').replace(/[♔-♟]/g, c => FIG[c]).replace(/ /g, ' ');
+  const heads = (t.match(/^\s*\[[^\n]*\]\s*$/gm) || []).map(x => x.trim()), body = t.replace(/^\s*\[[^\n]*\]\s*$/gm, ' ');
+  const asIs = (heads.length ? heads.join('\n') + '\n\n' : '') + body.trim();
+  try { if (readGame(asIs).plies.length) return asIs; } catch (e) { /* read it move by move below */ }
+  const fen = (/\[FEN "([^"]+)"\]/.exec(t) || [])[1], c = fen ? new Chess(fen) : new Chess(), sans = [];
+  let result = (/\[Result "([^"]+)"\]/.exec(t) || [])[1] || '';
+  for (let tok of body.replace(/\{[^}]*\}/g, ' ').replace(/\([^)]*\)/g, ' ').split(/\s+/)) {
+    tok = tok.replace(/^\d+\.(\.\.)?/, '').replace(/[!?]+$/, '').replace(/^0-0-0/, 'O-O-O').replace(/^0-0/, 'O-O');
+    if (!tok) continue;
+    if (/^(1-0|0-1|1\/2-1\/2|½-½|\*)$/.test(tok)) { if (!result) result = tok.replace('½-½', '1/2-1/2'); continue; }
+    if (!SANRE.test(tok)) continue; // move times, clocks and other page text
+    let m;
+    try { m = c.move(tok); } catch (e) { break; }
+    if (!m) break;
+    sans.push(m.san);
+  }
+  if (!sans.length) return asIs;
+  const first = fen ? (+fen.split(' ')[5] - 1) * 2 + (fen.split(' ')[1] === 'b' ? 1 : 0) : 0;
+  let moves = '';
+  sans.forEach((s, i) => { const k = i + first; moves += (k % 2 === 0 ? (k / 2 + 1) + '. ' : i === 0 ? (k + 1) / 2 + '... ' : '') + s + ' '; });
+  const hs = heads.filter(h => !/^\[Result /.test(h)).concat('[Result "' + (result || '*') + '"]');
+  return hs.join('\n') + '\n\n' + moves + (result || '*');
+}

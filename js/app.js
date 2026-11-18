@@ -397,7 +397,7 @@ function gamesHTML() {
     '<button class="btn ghost" data-act="paste">Paste a PGN</button><button class="btn ghost" data-act="addLink">Add a game by link</button></div>' +
     '<div id="linkBox" hidden><div class="row"><label class="grow">chess.com game link<input id="gameLink" placeholder="chess.com/game/live/…" autocomplete="off" autocapitalize="off" spellcheck="false"></label><button class="btn" data-act="addLinkGo">Add it</button></div></div>' +
     '<label class="chk"><input type="checkbox" id="autoOn"' + (S.settings.auto !== false ? ' checked' : '') + '> Review new games automatically when they finish</label>' +
-    '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
+    '<div id="pasteBox" hidden><textarea id="pgn" rows="5" placeholder="Paste a game’s PGN or its move list here"></textarea><div class="row"><label>I played<select id="pasteColor"><option value="w">White</option><option value="b">Black</option></select></label><label>Against<select id="pasteKind"><option value="person">A person</option><option value="computer">A computer</option></select></label><button class="btn" data-act="pasteGo">Review it</button></div></div></div>';
   const sync = '<h3>Sync between devices</h3><div class="card" id="syncCard">' + syncHTML() + '</div>';
   if (!S.games.length) return h + '<p class="empty">No games loaded yet. Press “Load my games”.</p>' + sync;
   const keys = Object.keys(GCAT).filter(k => cats[k]);
@@ -1609,8 +1609,8 @@ document.addEventListener('click', async e => {
   else if (act === 'addLink') { $('#linkBox').hidden = !$('#linkBox').hidden; if (!$('#linkBox').hidden) $('#gameLink').focus(); }
   else if (act === 'addLinkGo') addByLink($('#gameLink').value);
   else if (act === 'pasteGo') {
-    const pgn = $('#pgn').value.trim(), color = $('#pasteColor').value;
-    let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'That does not look like a PGN.'; renderStatus(); return; }
+    const pgn = R.cleanPgn($('#pgn').value.trim()), color = $('#pasteColor').value;
+    let game; try { game = R.readGame(pgn); if (!game.plies.length) throw new Error('empty'); } catch (err) { S.error = 'No moves could be read from that. Paste the game’s PGN, or its move list, from chess.com.'; renderStatus(); return; }
     const hd = game.headers, me = S.settings.user.trim().toLowerCase(), side = me && (hd.White || '').toLowerCase() === me ? 'w' : me && (hd.Black || '').toLowerCase() === me ? 'b' : color; // your own name in the PGN decides the colour
     const day = /^(\d{4})\.(\d{2})\.(\d{2})$/.exec(hd.UTCDate || hd.Date || ''), tm = /^(\d{2}):(\d{2})/.exec(hd.EndTime || hd.UTCTime || '');
     const end = day ? Date.UTC(+day[1], +day[2] - 1, +day[3], tm ? +tm[1] : 12, tm ? +tm[2] : 0) : Date.now();
