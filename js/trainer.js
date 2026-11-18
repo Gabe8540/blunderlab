@@ -36,7 +36,101 @@ export function histRecord(g, user, names) {
   }
   const tc = g.rules === 'chess960' ? (g.time_class === 'daily' ? 'daily960' : 'chess960') : g.time_class || ''; // Chess960 has ratings of its own
   return { id: String(g.uuid || g.url), end: (g.end_time || 0) * 1000, tc, c: black ? 'b' : 'w', res: outcome(mine.result),
-    r: mine.rating || 0, o: opp.rating || 0, rated: g.rated !== false, mv: ok.join(' '), op, opp: opp.username || '' };
+    r: mine.rating || 0, o: opp.rating || 0, rated: g.rated !== false, mv: ok.join(' '), op, opp: opp.username || '',
+    how: (outcome(mine.result) === 'win' ? opp.result : mine.result) || '', len: gameLen(g.pgn || '') };
+}
+function gameLen(pgn) { // full moves played
+  const body = pgn.replace(/^\s*\[[^\n]*\]\s*$/gm, ' ').replace(/\{[^}]*\}/g, ' ').replace(/\([^)]*\)/g, ' ');
+  let n = 0;
+  for (const m of body.matchAll(/(\d+)\.(?!\.)/g)) n = Math.max(n, +m[1]);
+  return n;
+}
+
+/* Insights from every game in the history (chess.com games), not only the reviewed ones. Each finding needs enough
+   games behind it to mean something; they come ranked by how big the gap is and how many games back it. */
+const HOW = { checkmated: 'checkmate', resigned: 'resignation', timeout: 'time', abandoned: 'abandoned', agreed: 'agreement',
+  repetition: 'repetition', stalemate: 'stalemate', insufficient: 'insufficient material', timevsinsufficient: 'time vs no mating material', '50move': '50-move rule' };
+export function historyInsights(hist, now) {
+  now = now || Date.now();
+  const L = hist.filter(h => h.res && h.end).slice().sort((a, b) => a.end - b.end);
+  const box = () => ({ n: 0, win: 0, draw: 0, loss: 0, exp: 0, en: 0 });
+  const add = (b, h) => {
+    b.n++; b[h.res]++;
+    if (h.r && h.o) { b.exp += 1 / (1 + Math.pow(10, (h.o - h.r) / 400)); b.en++; }
+    return b;
+  };
+  const sc = b => (b.n ? (b.win + b.draw / 2) / b.n : 0), pc = x => Math.round(100 * x);
+  const bump = (m, k, h) => add(m[k] || (m[k] = box()), h);
+  const out = { total: box(), color: { w: box(), b: box() }, tc: {}, gap: {}, winHow: {}, lossHow: {}, drawHow: {}, tod: {}, day: {}, after: {}, sess: {}, len: {}, op: {}, first: {}, recent: box(), before: box(), streak: { win: 0, loss: 0, cur: 0, curRes: '' }, findings: [] };
+  let run = 0, runRes = '', prev = null, inSess = 0;
+  for (const h of L) {
+    add(out.total, h); add(out.color[h.c] || (out.color[h.c] = box()), h); bump(out.tc, h.tc || 'other', h);
+    if (h.r && h.o) bump(out.gap, h.o - h.r >= 100 ? 'higher' : h.r - h.o >= 100 ? 'lower' : 'even', h);
+    if (h.how) (h.res === 'win' ? out.winHow : h.res === 'loss' ? out.lossHow : out.drawHow)[h.how] = ((h.res === 'win' ? out.winHow : h.res === 'loss' ? out.lossHow : out.drawHow)[h.how] || 0) + 1;
+    const d = new Date(h.end), hr = d.getHours();
+    bump(out.tod, hr < 6 ? 'night' : hr < 12 ? 'morning' : hr < 18 ? 'afternoon' : 'evening', h);
+    bump(out.day, d.getDay(), h);
+    const gap = prev ? h.end - prev.end : Infinity;
+    if (gap < 60 * 60e3) bump(out.after, prev.res, h); // the next game, played within the hour
+    inSess = gap < 45 * 60e3 ? inSess + 1 : 1;
+    bump(out.sess, inSess <= 3 ? 'early' : 'late', h);
+    if (h.len) bump(out.len, h.len < 25 ? 'short' : h.len <= 40 ? 'medium' : 'long', h);
+    if (h.op && !/960/.test(h.tc)) bump(out.op, h.c + '|' + h.op.split(':')[0].trim(), h);
+    if (h.c === 'w' && h.mv && !/960/.test(h.tc)) bump(out.first, h.mv.split(' ')[0], h);
+    add(now - h.end < 30 * 864e5 ? out.recent : now - h.end < 90 * 864e5 ? out.before : box(), h);
+    if (h.res === runRes) run++; else { run = 1; runRes = h.res; }
+    if (h.res === 'win') out.streak.win = Math.max(out.streak.win, run);
+    if (h.res === 'loss') out.streak.loss = Math.max(out.streak.loss, run);
+    prev = h;
+  }
+  out.streak.cur = run; out.streak.curRes = runRes;
+  out.score = sc; out.pc = pc; out.HOW = HOW;
+  const F = out.findings, f = (w, title, text) => F.push({ w, title, text });
+  const strength = (diff, n) => Math.abs(diff) * Math.sqrt(n);
+  // colour
+  const W = out.color.w, B = out.color.b;
+  if (W.n >= 20 && B.n >= 20 && Math.abs(sc(W) - sc(B)) >= 0.07) {
+    const weak = sc(W) < sc(B) ? 'White' : 'Black';
+    f(strength(sc(W) - sc(B), Math.min(W.n, B.n)), 'You are weaker with ' + weak, 'You score ' + pc(sc(W)) + '% as White and ' + pc(sc(B)) + '% as Black. Most of the gap is in the first moves: look at your openings with ' + weak + ' first.');
+  }
+  // time
+  const losses = out.total.loss, wins = out.total.win, lt = out.lossHow.timeout || 0, wt = out.winHow.timeout || 0;
+  if (losses >= 10 && lt / losses >= 0.25) f(lt / losses * Math.sqrt(losses) * 1.2, 'The clock costs you games', pc(lt / losses) + '% of your losses (' + lt + ' of ' + losses + ') are on time. Play the opening faster and save your thinking for the critical moments.');
+  if (wins >= 10 && wt / wins >= 0.25) f(wt / wins * Math.sqrt(wins) * 0.8, 'You win a lot on time', pc(wt / wins) + '% of your wins come on the clock. That works, but at slower time controls you would need to win on the board.');
+  const lm = out.lossHow.checkmated || 0;
+  if (losses >= 15 && lm / losses >= 0.35) f(lm / losses * Math.sqrt(losses), 'You get checkmated often', pc(lm / losses) + '% of your losses end in checkmate rather than resignation. Before every move, check what checks your opponent has.');
+  const ab = out.lossHow.abandoned || 0;
+  if (ab >= 3 && ab / Math.max(1, losses) >= 0.05) f(ab / losses * Math.sqrt(losses), 'Games you left', ab + ' losses came from leaving the game. Those are free points given away.');
+  // tilt and sessions
+  const aw = out.after.win, al = out.after.loss;
+  if (aw && al && aw.n >= 15 && al.n >= 15 && sc(aw) - sc(al) >= 0.07) f(strength(sc(aw) - sc(al), Math.min(aw.n, al.n)) * 1.1, 'Losses carry over', 'Right after a loss you score ' + pc(sc(al)) + '% in the next game, against ' + pc(sc(aw)) + '% right after a win. Take a few minutes off after a loss before the next game.');
+  const se = out.sess.early, sl = out.sess.late;
+  if (se && sl && se.n >= 20 && sl.n >= 20 && Math.abs(sc(se) - sc(sl)) >= 0.06) f(strength(sc(se) - sc(sl), Math.min(se.n, sl.n)), sc(sl) < sc(se) ? 'Long sessions hurt' : 'You warm up', sc(sl) < sc(se) ? 'You score ' + pc(sc(se)) + '% in the first three games of a sitting and ' + pc(sc(sl)) + '% after that. Stop after three or four games.' : 'You score ' + pc(sc(sl)) + '% from the fourth game of a sitting on, against ' + pc(sc(se)) + '% in the first three. A puzzle or two before playing may help.');
+  // time of day
+  const tods = Object.entries(out.tod).filter(([, b]) => b.n >= 15).sort((a, b) => sc(b[1]) - sc(a[1]));
+  if (tods.length >= 2 && sc(tods[0][1]) - sc(tods[tods.length - 1][1]) >= 0.1) { const [bk, bb] = tods[0], [wk, wb] = tods[tods.length - 1]; f(strength(sc(bb) - sc(wb), Math.min(bb.n, wb.n)) * 0.8, 'Your best time to play', 'You score ' + pc(sc(bb)) + '% in the ' + bk + ' and ' + pc(sc(wb)) + '% in the ' + wk + '. Play rated games when you are sharpest.'); }
+  // rating gap
+  const lo = out.gap.lower, hi = out.gap.higher;
+  if (lo && lo.en >= 15 && lo.exp / lo.en - sc(lo) >= 0.06) f(strength(lo.exp / lo.en - sc(lo), lo.n), 'Points dropped to lower-rated players', 'Against players 100+ below you, you score ' + pc(sc(lo)) + '% where the ratings say ' + pc(lo.exp / lo.en) + '%. Take them seriously: most of those losses are one careless move.');
+  if (hi && hi.en >= 15 && sc(hi) - hi.exp / hi.en >= 0.06) f(strength(sc(hi) - hi.exp / hi.en, hi.n) * 0.7, 'You play up to stronger players', 'Against players 100+ above you, you score ' + pc(sc(hi)) + '% where the ratings say ' + pc(hi.exp / hi.en) + '%.');
+  // openings
+  const ops = Object.entries(out.op).filter(([, b]) => b.n >= 8);
+  const worst = ops.slice().sort((a, b) => sc(a[1]) - sc(b[1]))[0], best = ops.slice().sort((a, b) => sc(b[1]) - sc(a[1]))[0];
+  const opName = k => k.split('|')[1] + ' as ' + (k[0] === 'w' ? 'White' : 'Black');
+  if (worst && sc(worst[1]) <= sc(out.total) - 0.1) f(strength(sc(out.total) - sc(worst[1]), worst[1].n), 'Your problem opening', opName(worst[0]) + ': ' + pc(sc(worst[1])) + '% over ' + worst[1].n + ' games, against ' + pc(sc(out.total)) + '% overall. Drill it in the Trainer or steer away from it.');
+  if (best && best !== worst && sc(best[1]) >= sc(out.total) + 0.1) f(strength(sc(best[1]) - sc(out.total), best[1].n) * 0.6, 'Your best opening', opName(best[0]) + ': ' + pc(sc(best[1])) + '% over ' + best[1].n + ' games. Aim for it when you can.');
+  // length
+  const sh = out.len.short, lg = out.len.long;
+  if (sh && sh.n >= 15 && sc(sh) <= sc(out.total) - 0.08) f(strength(sc(out.total) - sc(sh), sh.n), 'Early collapses', 'In games over before move 25 you score ' + pc(sc(sh)) + '%. Short losses usually mean an opening trap or a piece left hanging: the Blunder check drill targets this.');
+  if (lg && lg.n >= 15 && sc(lg) <= sc(out.total) - 0.08) f(strength(sc(out.total) - sc(lg), lg.n), 'Long games slip away', 'In games past move 40 you score ' + pc(sc(lg)) + '%. Practise endgames in the Trainer, and keep time for the late part of the game.');
+  // trend
+  const rc = out.recent, bf = out.before;
+  if (rc.n >= 10 && bf.n >= 10 && Math.abs(sc(rc) - sc(bf)) >= 0.07) f(strength(sc(rc) - sc(bf), Math.min(rc.n, bf.n)) * 0.7, sc(rc) > sc(bf) ? 'You are on an upswing' : 'A recent dip', 'Last 30 days: ' + pc(sc(rc)) + '% over ' + rc.n + ' games, against ' + pc(sc(bf)) + '% in the two months before.');
+  // time controls
+  const tcs = Object.entries(out.tc).filter(([, b]) => b.n >= 20).sort((a, b) => sc(b[1]) - sc(a[1]));
+  if (tcs.length >= 2 && sc(tcs[0][1]) - sc(tcs[tcs.length - 1][1]) >= 0.08) f(strength(sc(tcs[0][1]) - sc(tcs[tcs.length - 1][1]), Math.min(tcs[0][1].n, tcs[tcs.length - 1][1].n)) * 0.6, 'Your best time control', 'You score ' + pc(sc(tcs[0][1])) + '% in ' + tcs[0][0] + ' and ' + pc(sc(tcs[tcs.length - 1][1])) + '% in ' + tcs[tcs.length - 1][0] + '.');
+  F.sort((a, b) => b.w - a.w);
+  return out;
 }
 
 /* ---------- opening tree of your own games ---------- */

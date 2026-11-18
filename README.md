@@ -1,6 +1,6 @@
 # Blunder Lab made by Claude
 
-**Current version: 1.8.5**
+**Current version: 1.9.0**
 
 Chess game review and training for chess.com players. Runs as a Chrome extension on a computer and as a web app on iPhone, iPad or any browser.
 
@@ -43,6 +43,9 @@ Chess game review and training for chess.com players. Runs as a Chrome extension
 - Endgames: play out winning or level endgames from your own games against Stockfish
 
 **Insights**
+- Plain-language findings from every game you have played: weak colour, the clock, tilt after losses, long sessions, best time of day, problem openings, early collapses, recent trend
+- Your score by colour, time control, opponent rating (against what the ratings expect), game length, time of day, weekday, and after a win or loss
+- How your wins and losses end (checkmate, resignation, time) and your streaks
 - This week against last week
 - Rating over time with a projection
 - Goals and streaks: a rating target, puzzles a day, reviews a week

@@ -165,6 +165,9 @@ td .badge{margin-right:8px}
 .wld{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--line)}
 .wld .w{background:var(--best)}.wld .d{background:var(--forced)}.wld .l{background:var(--blunder)}
 .orow .muted{font:12px var(--mono);text-align:right}
+.orow.s{grid-template-columns:minmax(0,1.3fr) 1fr 84px 52px}
+.orow .sc{font:600 13px var(--mono);text-align:right;line-height:1.1}.orow .sc small{display:block;font-weight:400;font-size:10.5px;color:var(--muted)}
+@media (max-width:420px){.orow.s{grid-template-columns:minmax(0,1.2fr) 1fr 48px}.orow.s .muted{display:none}}
 
 /* trainer and rating chart */
 .seg{display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap}

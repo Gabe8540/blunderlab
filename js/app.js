@@ -41,7 +41,7 @@ async function loadAll() {
   S.rep = d.rep || { t: 0, list: [] }; S.calib = d.calib || {}; S.endProg = d.endProg || {};
   S.trainGames = d.trainGames || [];
   S.goals = d.goals || { t: 0 }; S.act = d.act || {}; if (d.daily && d.daily.list) S.daily = d.daily;
-  if ((d.histV || 1) < 2) S.histMonths = []; // older records lack the opponent's name: read the months again once
+  if ((d.histV || 1) < 3) S.histMonths = []; // older records lack the opponent's name or how the game ended: read the months again once
   S.sync.token = d.syncToken || ''; S.sync.gist = d.syncGist || '';
   if (!d.settings && touch) S.settings.depth = 'quick'; // phones and tablets start on the fast setting
   for (const k in d) if (k.startsWith('rv:')) S.reviews[k.slice(3)] = d[k];
@@ -116,7 +116,7 @@ async function syncGames(mode) {
       if ((g.rules && g.rules !== 'chess' && g.rules !== 'chess960') || !g.pgn) continue;
       const id = String(g.uuid || g.url);
       if (!hk.has(id)) { const h = T.histRecord(g, user, S.book.names); if (h) { hk.set(id, S.hist.length); S.hist.push(h); } }
-      else if (S.hist[hk.get(id)].opp === undefined) { const h = T.histRecord(g, user, S.book.names); if (h) S.hist[hk.get(id)] = h; }
+      else if (S.hist[hk.get(id)].how === undefined) { const h = T.histRecord(g, user, S.book.names); if (h) S.hist[hk.get(id)] = h; }
       if (!known.has(id) && metaMonths.has(months[i])) { const meta = toMeta(g, user); if (meta) { fresh.push(meta); known.add(id); } }
     }
     if (settled.includes(months[i]) && !S.histMonths.includes(months[i])) S.histMonths.push(months[i]);
@@ -126,7 +126,7 @@ async function syncGames(mode) {
   S.games = S.games.concat(fresh).sort((a, b) => b.end - a.end).filter(g => g.pasted || g.added || S.reviews[g.id] || (room[gcat(g)] = (room[gcat(g)] == null ? 80 : room[gcat(g)]) - 1) >= 0);
   S.histUser = lower;
   const newest = S.games.reduce((a, g) => (g.pasted ? a : Math.max(a, g.end)), 0);
-  await store.set(Object.assign({ games: S.games, hist: S.hist, histMonths: S.histMonths, histUser: lower, lastEnd: newest }, mode === 'quick' ? {} : { histV: 2 }));
+  await store.set(Object.assign({ games: S.games, hist: S.hist, histMonths: S.histMonths, histUser: lower, lastEnd: newest }, mode === 'quick' ? {} : { histV: 3 }));
   return prevNewest ? fresh.filter(g => g.end > prevNewest && S.games.includes(g)) : [];
 }
 // Looks for games that have just finished (on any device) and reviews them without being asked.
@@ -755,16 +755,24 @@ async function nextPuzzle() {
 }
 
 function insightsHTML() {
-  if (!S.games.length) return '<p class="empty">Load your games first.</p>';
+  if (!S.games.length && !S.hist.length) return '<p class="empty">Load your games first.</p>';
   const I = R.insights(S.games, S.reviews), pct = (a, n) => (n ? Math.round(100 * a / n) : 0);
+  const H = T.historyInsights(S.hist), all = H.total.n ? H.total : I.total;
   const accs = S.games.filter(g => S.reviews[g.id]).map(g => accOf(g, S.reviews[g.id], g.color)).filter(x => x != null);
   if (accs.length) I.accuracy = Math.round(accs.reduce((a, b) => a + b, 0) / accs.length * 10) / 10;
   const wld = o => '<span class="wld"><i class="w" style="flex:' + o.win + '"></i><i class="d" style="flex:' + o.draw + '"></i><i class="l" style="flex:' + o.loss + '"></i></span><span class="muted">' + o.win + 'W ' + o.draw + 'D ' + o.loss + 'L</span>';
-  let h = '<div class="stats"><div><b>' + I.total.n + '</b><span>games loaded</span></div><div><b>' + pct(I.total.win, I.total.n) + '%</b><span>won</span></div><div><b>' + (I.accuracy != null ? I.accuracy + '%' : '–') + '</b><span>accuracy (' + I.reviewed + ' reviewed)</span></div></div>';
+  const row = (label, o, extra) => '<div class="orow s"><span>' + label + '</span>' + wld(o) + '<b class="sc">' + H.pc(H.score(o)) + '%' + (extra || '') + '</b></div>';
+  let h = '<div class="stats"><div><b>' + all.n + '</b><span>games</span></div><div><b>' + pct(all.win, all.n) + '%</b><span>won</span></div><div><b>' + (I.accuracy != null ? I.accuracy + '%' : '–') + '</b><span>accuracy (' + I.reviewed + ' reviewed)</span></div></div>';
+  if (H.total.n) {
+    const st = H.streak;
+    h += '<h3>What your games say</h3><p class="muted">From all ' + H.total.n + ' of your chess.com games' + (S.hist.some(x => x.how === undefined) ? ' (some details still loading: press Sync once)' : '') + '. Percentages are your score: a win counts 1, a draw ½.</p>' +
+      (H.findings.length ? H.findings.slice(0, 6).map((t, i) => '<div class="card tip"><b>' + (i + 1) + '. ' + esc(t.title) + '</b><p>' + esc(t.text) + '</p></div>').join('') : '<div class="card"><p>No strong pattern across your games yet. Play more and check back.</p></div>') +
+      '<p class="muted">Best win streak ' + st.win + ' · worst losing streak ' + st.loss + ' · right now: ' + st.cur + ' ' + (st.curRes === 'win' ? 'win' : st.curRes === 'loss' ? 'loss' : 'draw') + (st.cur === 1 ? '' : st.curRes === 'loss' ? 'es' : 's') + ' in a row</p>';
+  }
   h += weeklyHTML() + eloHTML() + goalsHTML();
-  if (!I.reviewed) h += '<div class="card"><p>Review a few games to unlock advice. The more games reviewed, the better the advice.</p><button class="btn" data-act="batch">Review all</button></div>';
+  if (!I.reviewed) h += '<div class="card"><p>Review a few games to unlock move-by-move advice. The more games reviewed, the better the advice.</p><button class="btn" data-act="batch">Review all</button></div>';
   else {
-    h += '<h3>What to work on</h3>' + (I.tips.length ? I.tips.map((t, i) => '<div class="card tip"><b>' + (i + 1) + '. ' + esc(t.title) + '</b><p>' + esc(t.text) + '</p></div>').join('') : '<div class="card"><p>No clear pattern yet. Review more games.</p></div>') +
+    h += '<h3>What to work on (reviewed games)</h3>' + (I.tips.length ? I.tips.map((t, i) => '<div class="card tip"><b>' + (i + 1) + '. ' + esc(t.title) + '</b><p>' + esc(t.text) + '</p></div>').join('') : '<div class="card"><p>No clear pattern yet. Review more games.</p></div>') +
       (I.reviewed < 5 ? '<p class="muted">Based on only ' + I.reviewed + ' reviewed game' + (I.reviewed === 1 ? '' : 's') + '; treat it as a first hint.</p>' : '') +
       '<h3>Your moves</h3><div class="card">' + ['best', 'excellent', 'good', 'inaccuracy', 'mistake', 'miss', 'blunder'].map(k => '<div class="meter">' + badge(k) + '<span>' + R.LABEL[k] + '</span><span class="track"><i class="f-' + k + '" style="width:' + pct(I.classes[k], I.moves) + '%"></i></span><span class="v">' + I.classes[k] + '</span></div>').join('') + '</div>' +
       '<h3>Where the errors happen</h3><div class="card"><table><tr><th>Phase</th><th>Moves</th><th>Big errors</th><th>Per 10 moves</th></tr>' + ['opening', 'middlegame', 'endgame'].map(k => { const p = I.phases[k]; return '<tr><td>' + k.charAt(0).toUpperCase() + k.slice(1) + '</td><td>' + p.moves + '</td><td>' + p.bad + '</td><td>' + (p.moves ? (10 * p.bad / p.moves).toFixed(1) : '–') + '</td></tr>'; }).join('') + '</table>' +
@@ -772,8 +780,26 @@ function insightsHTML() {
   }
   h += themesHTML() + clockStatsHTML() + openReportHTML();
   h += rivalsHTML();
-  h += '<h3>Results</h3><div class="card"><div class="orow"><span>As White</span>' + wld(I.byColor.w) + '</div><div class="orow"><span>As Black</span>' + wld(I.byColor.b) + '</div></div>';
-  if (I.openings.length) h += '<h3>Your openings</h3><div class="card">' + I.openings.map(o => '<div class="orow"><span>' + esc(o.name) + '</span>' + wld(o) + '</div>').join('') + '</div>';
+  if (!H.total.n) {
+    h += '<h3>Results</h3><div class="card"><div class="orow"><span>As White</span>' + wld(I.byColor.w) + '</div><div class="orow"><span>As Black</span>' + wld(I.byColor.b) + '</div></div>';
+    if (I.openings.length) h += '<h3>Your openings</h3><div class="card">' + I.openings.map(o => '<div class="orow"><span>' + esc(o.name) + '</span>' + wld(o) + '</div>').join('') + '</div>';
+    return h;
+  }
+  const exp = o => (o.en ? '<small>exp ' + H.pc(o.exp / o.en) + '%</small>' : '');
+  const sect = (title, rows) => (rows.length ? '<h3>' + title + '</h3><div class="card">' + rows.join('') + '</div>' : '');
+  const TCN = { bullet: 'Bullet', blitz: 'Blitz', rapid: 'Rapid', daily: 'Daily', chess960: 'Chess960', daily960: 'Daily 960' };
+  h += sect('Results (all games)', [row('As White', H.color.w), row('As Black', H.color.b)].concat(Object.entries(H.tc).sort((a, b) => b[1].n - a[1].n).map(([k, o]) => row(TCN[k] || k, o))));
+  h += sect('By opponent rating', [['lower', 'Lower rated (100+ below)'], ['even', 'Within 100'], ['higher', 'Higher rated (100+ above)']].filter(([k]) => H.gap[k]).map(([k, l]) => row(l, H.gap[k], exp(H.gap[k]))));
+  const howList = (m, n) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k, v]) => esc(H.HOW[k] || k) + ' ' + pct(v, n) + '%').join(' · ') || '–';
+  h += '<h3>How your games end</h3><div class="card"><p><b>Wins</b> by ' + howList(H.winHow, H.total.win) + '</p><p><b>Losses</b> by ' + howList(H.lossHow, H.total.loss) + '</p>' + (H.total.draw ? '<p><b>Draws</b> by ' + howList(H.drawHow, H.total.draw) + '</p>' : '') + '</div>';
+  h += sect('Game length', [['short', 'Under 25 moves'], ['medium', '25 to 40 moves'], ['long', 'Over 40 moves']].filter(([k]) => H.len[k]).map(([k, l]) => row(l, H.len[k])));
+  h += sect('When you play', [['morning', 'Morning (6–12)'], ['afternoon', 'Afternoon (12–18)'], ['evening', 'Evening (18–24)'], ['night', 'Night (0–6)']].filter(([k]) => H.tod[k]).map(([k, l]) => row(l, H.tod[k])).concat(
+    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((l, i) => (H.day[i] ? row(l, H.day[i]) : '')).filter(Boolean)));
+  h += sect('Mood and sessions', [H.after.win && row('Next game after a win', H.after.win), H.after.loss && row('Next game after a loss', H.after.loss), H.after.draw && row('Next game after a draw', H.after.draw),
+    H.sess.early && row('Games 1–3 of a sitting', H.sess.early), H.sess.late && row('Game 4 on of a sitting', H.sess.late)].filter(Boolean));
+  const ops = c => Object.entries(H.op).filter(([k, o]) => k[0] === c && o.n >= 3).sort((a, b) => b[1].n - a[1].n).slice(0, 8).map(([k, o]) => row(esc(k.split('|')[1]), o));
+  h += sect('Your openings as White (all games)', ops('w')) + sect('Your openings as Black (all games)', ops('b'));
+  h += sect('Your first move as White', Object.entries(H.first).filter(([, o]) => o.n >= 3).sort((a, b) => b[1].n - a[1].n).slice(0, 5).map(([k, o]) => row('1.' + esc(k), o)));
   return h;
 }
 
@@ -1252,11 +1278,11 @@ async function syncNow() {
       if (S.histUser !== lower) { S.hist = []; S.histMonths = []; S.histUser = lower; }
       const have = new Map(S.hist.map((x, i) => [x.id, i])), add = rh.list.filter(x => !have.has(x.id));
       let fixed = 0;
-      for (const x of rh.list) if (have.has(x.id) && x.opp !== undefined && S.hist[have.get(x.id)].opp === undefined) { S.hist[have.get(x.id)] = x; fixed++; }
+      for (const x of rh.list) if (have.has(x.id) && x.how !== undefined && S.hist[have.get(x.id)].how === undefined) { S.hist[have.get(x.id)] = x; fixed++; }
       if (add.length || fixed) { S.hist = S.hist.concat(add).sort((a, b) => a.end - b.end); sets.hist = S.hist; sets.histUser = lower; }
     }
-    const full = h => h.every(x => x.opp !== undefined);
-    if (S.histUser === lower && S.hist.length && (rh.user !== lower || S.hist.length > (rh.list || []).length || (rh.v !== 2 && full(S.hist)))) out['hist.json'] = { user: lower, v: full(S.hist) ? 2 : 1, list: S.hist };
+    const full = h => h.every(x => x.how !== undefined);
+    if (S.histUser === lower && S.hist.length && (rh.user !== lower || S.hist.length > (rh.list || []).length || (rh.v !== 3 && full(S.hist)))) out['hist.json'] = { user: lower, v: full(S.hist) ? 3 : 1, list: S.hist };
     if (got || sets.puzzles) { S.games.sort((a, b) => b.end - a.end); sets.games = S.games; }
     if (Object.keys(sets).length) await store.set(sets);
     if (Object.keys(out).length) { await gist.write(S.sync.gist, out); Object.assign(remoteCache, out); }
