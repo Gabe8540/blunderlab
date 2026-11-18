@@ -72,7 +72,7 @@ async function getJSON(url, who) {
     if (!isExt) { try { return await jsonp(url); } catch (e2) { throw new Error('This browser could not read chess.com directly. With sync on, games reviewed on your computer still show up here.'); } }
     throw new Error('Could not reach chess.com. Check your connection and try again.');
   }
-  if (r.status === 404) throw new Error('chess.com has no player called “' + (who || S.settings.user) + '”.');
+  if (r.status === 404) throw new Error('chess.com has no player called “' + (who || S.settings.user) + '”. Check the spelling of the username.');
   if (!r.ok) throw new Error('chess.com returned an error (' + r.status + '). Try again in a minute.');
   return r.json();
 }
@@ -1462,17 +1462,18 @@ async function addGameById(id, kind, opt) {
   opt = opt || {};
   const have = opt.train ? liveTrain().find(g => (g.url || '').endsWith('/' + id)) : S.games.find(g => (g.url || '').endsWith('/' + id));
   if (have) { if (!opt.train && !have.added) { have.added = true; store.set({ games: S.games }); } S.ccOpen = !!opt.train || S.ccOpen; openGame(have); return; }
-  const user = (opt.user || S.settings.user).trim();
+  const user = (opt.user || S.settings.user).trim().replace(/^@/, '').replace(/\s+/g, '');
   if (!user) { S.error = opt.train ? 'Enter the username of one of the two players.' : 'Enter your chess.com username on the Games tab first.'; renderStatus(); return; }
   if (S.busy) { S.error = 'Wait for the current job to finish, then add the game again.'; renderStatus(); return; }
   S.error = ''; S.busy = { text: 'Looking for game ' + id + ' on chess.com', done: 0, total: 1 }; renderStatus();
   let found = null;
   try {
-    const base = 'https://api.chess.com/pub/player/' + encodeURIComponent(user.toLowerCase()), all = (await getJSON(base + '/games/archives')).archives || [];
+    const base = 'https://api.chess.com/pub/player/' + encodeURIComponent(user.toLowerCase()), all = (await getJSON(base + '/games/archives', user)).archives || [];
     const num = g => +((/\/(\d+)$/.exec(g.url || '') || [])[1] || 0), tried = new Set();
     const look = async i => {
       tried.add(i); S.busy.done = tried.size; S.busy.total = Math.max(S.busy.total, Math.ceil(Math.log2(all.length + 1)) + 1); renderStatus();
-      const gs = ((await getJSON(all[i])).games || []);
+      let gs = [];
+      try { gs = (await getJSON(all[i], user)).games || []; } catch (e) { if (/no player/.test(e.message)) gs = []; else throw e; } // a month chess.com cannot serve is skipped, not fatal
       return { f: gs.find(g => (g.url || '').endsWith('/' + id)), ids: gs.filter(g => !kind || (g.url || '').includes('/' + kind + '/')).map(num).filter(Boolean) };
     };
     let lo = 0, hi = all.length - 1;
