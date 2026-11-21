@@ -755,14 +755,18 @@ function dailyNext(theme, retry) {
   Object.assign(S.puzzle, { daily: true, dTheme: theme, retry: !!retry });
   renderPanel();
 }
-function dailyHTML() {
-  const d = today(), keys = Object.keys(R.THEMES), total = keys.length * DAILY_N, tried = d.list.filter(p => d.res[p.id]).length, todo = d.list.length - tried;
-  const ok = d.list.filter(p => d.res[p.id] === 'ok').length, miss = d.list.filter(p => d.res[p.id] === 'miss').length, run = T.streak(S.act, 'daily', 1, Date.now());
-  return '<h3>Daily puzzles</h3><div class="card"><p>Five new made-up puzzles of every type, every day.' + (d.list.length < total ? ' ' + d.list.length + ' of ' + total + ' are ready' + (dailyRun ? '; the rest are being made while Blunder Lab is open.' : '.') : '') + '</p><div class="dgrid">' +
-    keys.map(k => { const ready = d.list.filter(p => p.th === k), dn = ready.filter(p => d.res[p.id]).length; return '<button data-act="dailyStart" data-v="' + k + '"' + (ready.length > dn ? '' : ' disabled') + '><span>' + R.THEMES[k] + '</span><b>' + (dn >= DAILY_N ? '✓' : dn + '/' + DAILY_N) + '</b></button>'; }).join('') + '</div>' +
-    '<div class="row"><button class="btn" data-act="dailyStart" data-v=""' + (todo ? '' : ' disabled') + '>' + (todo ? 'Start today’s puzzles (' + todo + ' to go)' : tried >= total ? 'All done for today' : 'Waiting for more puzzles') + '</button>' +
-    (miss ? '<button class="btn ghost" data-act="dailyRetry">Retry the ' + miss + ' I missed</button>' : '') + '</div>' +
-    (tried || run ? '<p class="muted">' + (tried ? 'Today: ' + ok + ' right first time of ' + tried + ' tried' : '') + (tried && run ? ' · ' : '') + (run ? run + '-day streak of full sets' : '') + '</p>' : '') + '</div>';
+function dailyHTML() { // laid out like "From your games": type chips, then one card with a Start button
+  const d = today(), keys = Object.keys(R.THEMES), total = keys.length * DAILY_N, th = S.dTheme || '';
+  const of = k => d.list.filter(p => !k || p.th === k), done = k => of(k).filter(p => d.res[p.id]).length;
+  const tried = done(''), ok = d.list.filter(p => d.res[p.id] === 'ok').length, run = T.streak(S.act, 'daily', 1, Date.now());
+  const sel = of(th), todo = sel.length - done(th), miss = sel.filter(p => d.res[p.id] === 'miss').length, tname = th ? R.THEMES[th].toLowerCase() : '';
+  const lab = k => { const max = k ? DAILY_N : total, left = of(k).length - done(k); return done(k) >= max ? '<span class="tick">✓</span>' : '<span class="muted">' + (left || '…') + '</span>'; }; // puzzles ready and not yet tried, like the chips below
+  return '<h3>Daily puzzles</h3><div class="seg chips"><button data-act="dTheme" data-v="" aria-pressed="' + !th + '">All ' + lab('') + '</button>' +
+    keys.map(k => '<button data-act="dTheme" data-v="' + k + '" aria-pressed="' + (th === k) + '">' + R.THEMES[k] + ' ' + lab(k) + '</button>').join('') + '</div>' +
+    '<div class="card"><p>Five new made-up puzzles of every type, every day.' + (d.list.length < total ? ' ' + d.list.length + ' of ' + total + ' are ready' + (dailyRun ? '; the rest are being made while Blunder Lab is open.' : '.') : '') + '</p>' +
+    (tried || run ? '<p class="muted">' + (tried ? 'Today: ' + ok + ' right first time of ' + tried + ' tried' : '') + (tried && run ? ' · ' : '') + (run ? run + '-day streak of full sets' : '') + '</p>' : '') +
+    '<div class="row"><button class="btn" data-act="dailyStart" data-v="' + th + '"' + (todo ? '' : ' disabled') + '>' + (todo ? 'Start (' + todo + ' left' + (tname ? ', ' + esc(tname) : '') + ')' : sel.length >= (th ? DAILY_N : total) ? 'All done for today' : 'Waiting for more puzzles') + '</button>' +
+    (miss ? '<button class="btn ghost" data-act="dailyRetry" data-v="' + th + '">Retry the ' + miss + ' I missed</button>' : '') + '</div></div>';
 }
 function stopMaking() { genTok++; if (S.pzMaking && genE) genE.stop(); S.pzMaking = null; }
 async function nextPuzzle() {
@@ -2056,7 +2060,8 @@ document.addEventListener('click', async e => {
   else if (act === 'pzNext' && S.puzzle && S.puzzle.daily) dailyNext(S.puzzle.dTheme, S.puzzle.retry);
   else if (act === 'pzStart' || act === 'pzNext') nextPuzzle();
   else if (act === 'dailyStart') { stopMaking(); dailyNext(a.dataset.v, false); }
-  else if (act === 'dailyRetry') { stopMaking(); dailyNext('', true); }
+  else if (act === 'dailyRetry') { stopMaking(); dailyNext(a.dataset.v || '', true); }
+  else if (act === 'dTheme') { S.dTheme = a.dataset.v; renderPanel(); }
   else if (act === 'pzShow') puzzleDone(false, answerText(S.puzzle.p));
   else if (act === 'pzLine') enterLine(S.puzzle.p.fen, S.puzzle.p.pv, 'The answer', 1);
   else if (act === 'pzAlt' && S.puzzle && Array.isArray(S.puzzle.alts)) { const z = S.puzzle, l = z.alts[+a.dataset.i], fen = z.p.fen; if (l) { const first = (R.lineToSan(fen, [l.pv[0]])[0] || {}).san || ''; enterLine(fen, l.pv, (l.pv[0] === (z.mine ? z.mine.pv[0] : z.played) ? 'Your move, ' : 'Line ' + (+a.dataset.i + 1) + ', ') + first + (l.cp != null || l.mate != null ? ' (' + R.scoreText(l, wtm(fen)) + ')' : ''), 1); renderPanel(); } }
